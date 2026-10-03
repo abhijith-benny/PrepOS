@@ -1,0 +1,65 @@
+{
+  "seed": 7,
+  "learners_evaluated": 100,
+  "adaptive_mae": 0.17016797728676267,
+  "adaptive_spearman": 0.27029400684203736,
+  "fixed_random_mae": 0.34904249771991047,
+  "fixed_random_spearman": 0.21829111960448852,
+  "questions_to_confidence_mean": 25.0,
+  "questions_to_confidence_max": 25,
+  "cluster_silhouette": 0.5030337218032567,
+  "cluster_silhouette_five_seed": [
+    0.5030337218032567,
+    0.5030337218032567,
+    0.5030337218032567,
+    0.5030337218032567,
+    0.5030337218032567
+  ],
+  "cluster_silhouette_five_seed_mean": 0.5030337218032567,
+  "cluster_silhouette_five_seed_min": 0.5030337218032567,
+  "cluster_sizes": {
+    "0": 301,
+    "1": 315,
+    "2": 296,
+    "3": 295,
+    "4": 293
+  },
+  "archetype_cluster_counts": {
+    "0": {
+      "0": 0,
+      "1": 0,
+      "2": 296,
+      "3": 0,
+      "4": 0
+    },
+    "1": {
+      "0": 0,
+      "1": 0,
+      "2": 0,
+      "3": 295,
+      "4": 0
+    },
+    "2": {
+      "0": 301,
+      "1": 0,
+      "2": 0,
+      "3": 0,
+      "4": 0
+    },
+    "3": {
+      "0": 0,
+      "1": 0,
+      "2": 0,
+      "3": 0,
+      "4": 293
+    },
+    "4": {
+      "0": 0,
+      "1": 315,
+      "2": 0,
+      "3": 0,
+      "4": 0
+    }
+  },
+  "model_version": "diagnostic-profile-v1"
+}
