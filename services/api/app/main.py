@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.deps import get_current_user
 from app.shared.events import AttemptRecorded
 from app.shared.learner_model import EVENT_BUS, apply_evidence, get_skill_vector
-from app.shared.repositories import attempt_repository
+from app.shared.repositories import attempt_repository, profile_repository
 from app.shared.schemas import AttemptCreate, AttemptResponse, HealthResponse, MeResponse, TopicRead, UserProfileUpdate
 
 app = FastAPI(title="PrepOS API", version="0.1.0")
@@ -29,10 +29,18 @@ def health() -> HealthResponse:
 
 @app.get("/me")
 def read_me(current_user=Depends(get_current_user)) -> MeResponse:
+    user_id = current_user.get("id", current_user.get("sub"))
+    profile = profile_repository.get(user_id)
     return MeResponse(
-        id=current_user.get("id", current_user.get("sub")),
+        id=user_id,
         email=current_user.get("email"),
-        full_name=current_user.get("full_name"),
+        full_name=profile.get("full_name") or current_user.get("full_name"),
+        target_role=profile.get("target_role"),
+        target_date=profile.get("target_date"),
+        weekly_hours=profile.get("weekly_hours"),
+        department=profile.get("department"),
+        year_or_semester=profile.get("year_or_semester"),
+        known_languages=profile.get("known_languages"),
     )
 
 
@@ -41,10 +49,18 @@ def update_me(
     payload: UserProfileUpdate,
     current_user=Depends(get_current_user),
 ) -> MeResponse:
+    user_id = current_user.get("id", current_user.get("sub"))
+    profile = profile_repository.save(user_id, payload.model_dump(exclude_none=True))
     return MeResponse(
-        id=current_user.get("id"),
+        id=user_id,
         email=current_user.get("email"),
-        full_name=current_user.get("full_name") or payload.full_name,
+        full_name=profile.get("full_name") or current_user.get("full_name"),
+        target_role=profile.get("target_role"),
+        target_date=profile.get("target_date"),
+        weekly_hours=profile.get("weekly_hours"),
+        department=profile.get("department"),
+        year_or_semester=profile.get("year_or_semester"),
+        known_languages=profile.get("known_languages"),
     )
 
 

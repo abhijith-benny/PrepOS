@@ -74,6 +74,42 @@ def test_full_flow_and_session_ownership() -> None:
     finally:
         app.dependency_overrides.clear()
 
+
+def test_sections_unlock_in_order_and_report_groups() -> None:
+    from app.modules.diagnostic import router as diagnostic_router
+
+    diagnostic_router.STORE.legacy_completion = False
+    app.dependency_overrides[get_current_user] = lambda: {"id": "section-user", "email": "section@example.com"}
+    try:
+        client = TestClient(app)
+        started = client.post("/diagnostic/sessions")
+        session_id = started.json()["id"]
+        session = diagnostic_router.STORE.sessions[session_id]
+        for state in session["sections"].values():
+            state["question_limit"] = 1
+        first = client.get(f"/diagnostic/sessions/{session_id}/next").json()["question"]
+        second_question = next(
+            question for question in diagnostic_router.STORE._questions()
+            if question["category"] == "CS core"
+        )
+        locked = client.post(
+            f"/diagnostic/sessions/{session_id}/answer",
+            json={"question_id": second_question["id"], "answer": "A", "time_taken_s": 1},
+        )
+        assert locked.status_code == 409
+        client.post(f"/diagnostic/sessions/{session_id}/answer", json={"question_id": first["id"], "answer": "A", "time_taken_s": 1})
+        for category in ("CS core", "English", "DSA"):
+            question = next(item for item in diagnostic_router.STORE._questions() if item["category"] == category)
+            response = client.get(f"/diagnostic/sessions/{session_id}/next").json()
+            assert response["section"]["label"]
+            client.post(f"/diagnostic/sessions/{session_id}/answer", json={"question_id": question["id"], "answer": "A", "time_taken_s": 1})
+        report = client.post(f"/diagnostic/sessions/{session_id}/complete")
+        assert report.status_code == 200
+        assert [section["label"] for section in report.json()["sections"]] == ["Aptitude", "Computer Aptitude", "English", "Coding"]
+        assert all("score" in section for section in report.json()["sections"])
+    finally:
+        app.dependency_overrides.clear()
+
     app.dependency_overrides[get_current_user] = lambda: {"id": "other-user", "email": "other@example.com"}
     try:
         assert TestClient(app).get(f"/diagnostic/sessions/{session_id}/report").status_code == 404

@@ -38,7 +38,7 @@ def _preferred_days(value: Any) -> set[int]:
 
 def _preferred_times(value: Any) -> list[str]:
     if not value:
-        return ["08:00", "12:00", "18:00", "20:00"]
+        return ["08:00", "10:00", "12:00", "14:00", "18:00", "20:00"]
     if isinstance(value, dict):
         value = value.get("times", [])
     return [str(item)[:5] for item in value]

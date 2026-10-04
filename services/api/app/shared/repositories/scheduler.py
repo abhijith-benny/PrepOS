@@ -4,6 +4,7 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from supabase import Client, create_client
+from app.shared.repositories.retry import retry_supabase
 
 
 DEFAULT_TOPICS = [
@@ -29,6 +30,11 @@ class InMemoryProfileRepository:
 
     def get(self, user_id: str) -> dict[str, Any]:
         return dict(self.profiles.get(user_id, {}))
+
+    def save(self, user_id: str, profile: dict[str, Any]) -> dict[str, Any]:
+        saved = {"id": user_id, **profile}
+        self.profiles[user_id] = saved
+        return dict(saved)
 
 
 class InMemoryStudyPlanRepository:
@@ -76,7 +82,7 @@ class SupabaseTopicRepository:
         self.client = client
 
     def list_topics(self) -> list[dict[str, Any]]:
-        return self.client.table("topics").select("id,name,category").execute().data
+        return retry_supabase(lambda: self.client.table("topics").select("id,name,category").execute()).data
 
 
 class SupabaseProfileRepository:
@@ -84,8 +90,13 @@ class SupabaseProfileRepository:
         self.client = client
 
     def get(self, user_id: str) -> dict[str, Any]:
-        rows = self.client.table("profiles").select("*").eq("id", user_id).limit(1).execute().data
+        rows = retry_supabase(lambda: self.client.table("profiles").select("*").eq("id", user_id).limit(1).execute()).data
         return rows[0] if rows else {}
+
+    def save(self, user_id: str, profile: dict[str, Any]) -> dict[str, Any]:
+        row = {"id": user_id, **profile}
+        saved = retry_supabase(lambda: self.client.table("profiles").upsert(row, on_conflict="id").execute()).data
+        return saved[0] if saved else row
 
 
 class SupabaseStudyPlanRepository:
@@ -94,36 +105,36 @@ class SupabaseStudyPlanRepository:
 
     def create(self, plan: dict[str, Any]) -> dict[str, Any]:
         plan_row = {key: plan[key] for key in ("id", "user_id", "week_start_date", "status", "generated_at", "horizon_weeks", "config")}
-        self.client.table("study_plans").insert(plan_row).execute()
+        retry_supabase(lambda: self.client.table("study_plans").insert(plan_row).execute())
         rows = [{key: session[key] for key in ("id", "plan_id", "user_id", "topic_id", "day_of_week", "start_time", "duration_minutes", "status", "completed_at")} for session in plan["sessions"]]
         if rows:
-            self.client.table("plan_sessions").insert(rows).execute()
+            retry_supabase(lambda: self.client.table("plan_sessions").insert(rows).execute())
         return plan
 
     def archive(self, user_id: str, plan_id: str) -> None:
-        self.client.table("study_plans").update({"status": "archived"}).eq("id", plan_id).eq("user_id", user_id).execute()
+        retry_supabase(lambda: self.client.table("study_plans").update({"status": "archived"}).eq("id", plan_id).eq("user_id", user_id).execute())
 
     def _with_sessions(self, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
         if not rows:
             return None
         plan = rows[0]
-        plan["sessions"] = self.client.table("plan_sessions").select("*").eq("plan_id", plan["id"]).eq("user_id", plan["user_id"]).execute().data
+        plan["sessions"] = retry_supabase(lambda: self.client.table("plan_sessions").select("*").eq("plan_id", plan["id"]).eq("user_id", plan["user_id"]).execute()).data
         return plan
 
     def current(self, user_id: str, week_start: date) -> dict[str, Any] | None:
-        rows = self.client.table("study_plans").select("*").eq("user_id", user_id).eq("week_start_date", week_start.isoformat()).eq("status", "active").limit(1).execute().data
+        rows = retry_supabase(lambda: self.client.table("study_plans").select("*").eq("user_id", user_id).eq("week_start_date", week_start.isoformat()).eq("status", "active").limit(1).execute()).data
         return self._with_sessions(rows)
 
     def get(self, user_id: str, plan_id: str) -> dict[str, Any] | None:
-        rows = self.client.table("study_plans").select("*").eq("id", plan_id).eq("user_id", user_id).limit(1).execute().data
+        rows = retry_supabase(lambda: self.client.table("study_plans").select("*").eq("id", plan_id).eq("user_id", user_id).limit(1).execute()).data
         return self._with_sessions(rows)
 
     def history(self, user_id: str, limit: int, offset: int) -> list[dict[str, Any]]:
-        rows = self.client.table("study_plans").select("*").eq("user_id", user_id).order("week_start_date", desc=True).range(offset, offset + limit - 1).execute().data
+        rows = retry_supabase(lambda: self.client.table("study_plans").select("*").eq("user_id", user_id).order("week_start_date", desc=True).range(offset, offset + limit - 1).execute()).data
         return [self._with_sessions([row]) for row in rows]
 
     def update_session(self, user_id: str, plan_id: str, session_id: str, status: str) -> dict[str, Any] | None:
-        rows = self.client.table("plan_sessions").update({"status": status, "completed_at": datetime.now(timezone.utc).isoformat() if status == "completed" else None}).eq("id", session_id).eq("plan_id", plan_id).eq("user_id", user_id).execute().data
+        rows = retry_supabase(lambda: self.client.table("plan_sessions").update({"status": status, "completed_at": datetime.now(timezone.utc).isoformat() if status == "completed" else None}).eq("id", session_id).eq("plan_id", plan_id).eq("user_id", user_id).execute()).data
         return rows[0] if rows else None
 
 

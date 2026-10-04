@@ -23,12 +23,14 @@ def in_memory_repositories(request: pytest.FixtureRequest, monkeypatch: pytest.M
 	from app.shared.repositories.scheduler import InMemoryProfileRepository, InMemoryStudyPlanRepository, InMemoryTopicRepository
 
 	monkeypatch.setattr(main_module, "attempt_repository", InMemoryAttemptRepository())
+	monkeypatch.setattr(main_module, "profile_repository", InMemoryProfileRepository())
 	monkeypatch.setattr(events_module, "event_repository", InMemoryEventRepository())
 	monkeypatch.setattr(learner_model, "skill_repository", InMemorySkillRepository())
 	monkeypatch.setattr(learner_model, "EVENT_BUS", EventBus())
 	monkeypatch.setattr(main_module, "EVENT_BUS", learner_model.EVENT_BUS)
 	monkeypatch.setattr(diagnostic_router, "EVENT_BUS", learner_model.EVENT_BUS)
 	monkeypatch.setattr(diagnostic_router.STORE, "supabase", None)
+	monkeypatch.setattr(diagnostic_router.STORE, "legacy_completion", True)
 	diagnostic_router.STORE.sessions.clear()
 	monkeypatch.setattr(scheduler_router, "profile_repository", InMemoryProfileRepository())
 	monkeypatch.setattr(scheduler_router, "study_plan_repository", InMemoryStudyPlanRepository())

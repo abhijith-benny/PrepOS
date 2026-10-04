@@ -22,6 +22,29 @@ def test_auth_rejected_for_protected_routes() -> None:
     assert response.status_code == 401
 
 
+def test_profile_fields_round_trip_through_server() -> None:
+    app.dependency_overrides[get_current_user] = lambda: {"id": "profile-user", "email": "profile@example.com"}
+    try:
+        saved = client.patch(
+            "/me",
+            json={
+                "department": "Computer Science",
+                "year_or_semester": "3rd year",
+                "known_languages": ["Python", "Java"],
+                "weekly_hours": 10,
+            },
+        )
+        assert saved.status_code == 200
+        assert saved.json()["department"] == "Computer Science"
+        loaded = client.get("/me")
+        assert loaded.status_code == 200
+        assert loaded.json()["department"] == "Computer Science"
+        assert loaded.json()["year_or_semester"] == "3rd year"
+        assert loaded.json()["known_languages"] == ["Python", "Java"]
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_attempt_flow_updates_skill_vector() -> None:
     app.dependency_overrides[get_current_user] = lambda: {"id": "user-123", "email": "demo@example.com"}
     try:
