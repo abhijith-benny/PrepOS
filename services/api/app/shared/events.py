@@ -52,8 +52,8 @@ def record_event(user_id: str, type_: str, payload: dict[str, Any]) -> dict[str,
 
 
 class EventBus:
-    def __init__(self, repository: EventRepository = event_repository) -> None:
-        self._repository = repository
+    def __init__(self, repository: EventRepository | None = None) -> None:
+        self._repository = repository or event_repository
         self._listeners: dict[str, list[Callable[[BaseEvent], None]]] = {}
         self._events: list[BaseEvent] = []
 

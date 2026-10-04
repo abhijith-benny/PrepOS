@@ -164,6 +164,46 @@ function Diagnostic() {
   return <section className="diagnostic-panel"><div className="progress-line"><span>Question {progress + 1} of 25</span><span className="timer">Timed</span></div><div className="progress-track"><i style={{ width: `${Math.min((progress / 25) * 100, 100)}%` }} /></div><h2>{question?.body}</h2><div className="answer-grid">{(question?.options || []).map((option) => <button key={option} className="answer-button" onClick={() => answer(option)}>{option}</button>)}</div></section>
 }
 
+function Planner() {
+  const { session } = useAuthStore()
+  const [plan, setPlan] = useState(null)
+  const [message, setMessage] = useState('')
+  const token = session?.access_token
+
+  async function loadCurrent() {
+    const current = await apiRequest('/schedule/current', { method: 'GET' }, token)
+    setPlan(current)
+  }
+
+  useEffect(() => {
+    loadCurrent().catch((error) => setMessage(error.message))
+  }, [token])
+
+  async function generate() {
+    setMessage('')
+    try {
+      setPlan(await apiRequest('/schedule/generate', { method: 'POST' }, token))
+    } catch (error) {
+      let detail = error.message
+      try {
+        const parsed = JSON.parse(detail)
+        detail = parsed.detail?.reason || `${parsed.detail?.minimum_hours_needed || ''} hours needed.`
+      } catch {
+        // Keep the raw API message when it is not JSON.
+      }
+      setMessage(detail)
+    }
+  }
+
+  async function updateSession(id, action) {
+    const updated = await apiRequest(`/schedule/sessions/${id}/${action}`, { method: 'POST' }, token)
+    setPlan((current) => ({ ...current, sessions: current.sessions.map((item) => item.id === id ? { ...item, ...updated } : item) }))
+  }
+
+  const days = Array.from({ length: 7 }, (_, index) => index)
+  return <section className="planner-panel"><div className="planner-header"><div><div className="eyebrow">Weekly planner</div><h2>Your study week</h2></div><button onClick={generate}>Generate this week's plan</button></div>{message && <p className="planner-message">{message}</p>}{!plan && <p className="planner-empty">Generate a plan to place your next study blocks.</p>}{plan && <div className="week-grid">{days.map((day) => <div className="day-column" key={day}><h3>{['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][day]}</h3>{plan.sessions.filter((item) => item.day_of_week === day).map((item) => <article className={`session ${item.status}`} key={item.id}><strong>{item.topic_id}</strong><span>{item.start_time} · {item.duration_minutes} min</span>{item.status === 'scheduled' && <div className="session-actions"><button onClick={() => updateSession(item.id, 'complete')}>Complete</button><button className="secondary" onClick={() => updateSession(item.id, 'skip')}>Skip</button></div>}<small>{item.status}</small></article>)}</div>)}</div>}</section>
+}
+
 function AppShell() {
   const { session, clearSession } = useAuthStore()
   const currentToken = session?.access_token
@@ -193,7 +233,7 @@ function AppShell() {
       <main className="content">
         {page === 'Dashboard' && <Dashboard />}
         {page === 'Diagnostic' && <Diagnostic />}
-        {page === 'Planner' && <div className="card"><h3>Planner</h3><p>Stub page</p></div>}
+        {page === 'Planner' && <Planner />}
         {page === 'Review' && <div className="card"><h3>Review</h3><p>Stub page</p></div>}
         {page === 'Interview' && <div className="card"><h3>Interview</h3><p>Stub page</p></div>}
         {currentToken && <OnboardingForm />}
