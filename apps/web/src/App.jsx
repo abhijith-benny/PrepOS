@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './supabaseClient'
 import { useAuthStore } from './store/authStore'
 import { apiRequest } from './apiClient'
+import Interview from './Interview'
 
 const navItems = [
   { label: 'Dashboard', path: '/' },
@@ -195,7 +196,7 @@ function AppShell() {
         {page === 'Diagnostic' && <Diagnostic />}
         {page === 'Planner' && <div className="card"><h3>Planner</h3><p>Stub page</p></div>}
         {page === 'Review' && <div className="card"><h3>Review</h3><p>Stub page</p></div>}
-        {page === 'Interview' && <div className="card"><h3>Interview</h3><p>Stub page</p></div>}
+        {page === 'Interview' && <Interview />}
         {currentToken && <OnboardingForm />}
       </main>
     </div>

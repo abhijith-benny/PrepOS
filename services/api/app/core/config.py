@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     jwt_issuer: str = Field(default="", alias="JWT_ISSUER")
     jwt_audience: str = Field(default="authenticated", alias="JWT_AUDIENCE")
     api_base_url: str = Field(default="http://localhost:8000", alias="API_BASE_URL")
+    gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
+    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
