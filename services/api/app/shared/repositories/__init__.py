@@ -20,6 +20,7 @@ from app.shared.repositories.scheduler import (
     InMemoryTopicRepository,
     create_scheduler_repositories,
 )
+from app.shared.repositories.coding import InMemoryCodingRepository, create_coding_repository
 from app.shared.repositories.supabase import create_supabase_repositories
 
 
@@ -32,6 +33,7 @@ if settings.supabase_url and settings.supabase_service_role_key:
         settings.supabase_url,
         settings.supabase_service_role_key,
     )
+    coding_repository = create_coding_repository(settings.supabase_url, settings.supabase_service_role_key)
 else:
     skill_repository = InMemorySkillRepository()
     event_repository = InMemoryEventRepository()
@@ -39,6 +41,7 @@ else:
     topic_repository = InMemoryTopicRepository()
     profile_repository = InMemoryProfileRepository()
     study_plan_repository = InMemoryStudyPlanRepository()
+    coding_repository = InMemoryCodingRepository()
 
 
 __all__ = [
@@ -57,4 +60,5 @@ __all__ = [
     "profile_repository",
     "study_plan_repository",
     "topic_repository",
+    "coding_repository",
 ]

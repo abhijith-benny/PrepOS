@@ -41,6 +41,7 @@ def read_me(current_user=Depends(get_current_user)) -> MeResponse:
         department=profile.get("department"),
         year_or_semester=profile.get("year_or_semester"),
         known_languages=profile.get("known_languages"),
+        leetcode_username=profile.get("leetcode_username"),
     )
 
 
@@ -61,6 +62,7 @@ def update_me(
         department=profile.get("department"),
         year_or_semester=profile.get("year_or_semester"),
         known_languages=profile.get("known_languages"),
+        leetcode_username=profile.get("leetcode_username"),
     )
 
 
@@ -103,7 +105,7 @@ def create_attempt(
     )
 
 
-for module_name in ["diagnostic", "scheduler", "srs", "interview"]:
+for module_name in ["diagnostic", "scheduler", "srs", "interview", "coding_practice"]:
     try:
         module = import_module(f"app.modules.{module_name}.router")
         app.include_router(module.router)

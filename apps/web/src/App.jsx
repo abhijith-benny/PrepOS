@@ -8,8 +8,9 @@ const navItems = [
   { label: 'Diagnostic', path: '/diagnostic', icon: '02' },
   { label: 'Planner', path: '/planner', icon: '03' },
   { label: 'Profile', path: '/profile', icon: '04' },
-  { label: 'Review', path: '/review', icon: '05' },
-  { label: 'Interview', path: '/interview', icon: '06' },
+  { label: 'Coding Practice', path: '/coding', icon: '05' },
+  { label: 'Review', path: '/review', icon: '06' },
+  { label: 'Interview', path: '/interview', icon: '07' },
 ]
 
 const PROFILE_STORAGE_KEY = 'prepos:profile'
@@ -67,7 +68,7 @@ function SignInForm() {
 
 function OnboardingForm({ profile = null, mode = 'onboarding', onSaved }) {
   const { user, session } = useAuthStore()
-  const [form, setForm] = useState({ target_role: profile?.target_role || '', target_date: profile?.target_date || '', weekly_hours: profile?.weekly_hours || '10', department: profile?.department || '', year_or_semester: profile?.year_or_semester || '', known_languages: (profile?.known_languages || []).join(', ') })
+  const [form, setForm] = useState({ target_role: profile?.target_role || '', target_date: profile?.target_date || '', weekly_hours: profile?.weekly_hours || '10', department: profile?.department || '', year_or_semester: profile?.year_or_semester || '', known_languages: (profile?.known_languages || []).join(', '), leetcode_username: profile?.leetcode_username || '' })
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -92,6 +93,7 @@ function OnboardingForm({ profile = null, mode = 'onboarding', onSaved }) {
       department: form.department.trim(),
       year_or_semester: form.year_or_semester.trim() || null,
       known_languages: form.known_languages.split(',').map((language) => language.trim()).filter(Boolean),
+      leetcode_username: form.leetcode_username.trim() || null,
     }
     try {
       const { data: sessionData } = await supabase.auth.refreshSession()
@@ -118,6 +120,7 @@ function OnboardingForm({ profile = null, mode = 'onboarding', onSaved }) {
         <div className="form-field"><label htmlFor="department">Department <span className="required-mark">Required</span></label><input id="department" value={form.department} onChange={handleChange('department')} placeholder="e.g. Computer Science" required /></div>
         <div className="form-field"><label htmlFor="year-semester">Year or semester <span className="optional-mark">Optional</span></label><input id="year-semester" value={form.year_or_semester} onChange={handleChange('year_or_semester')} placeholder="e.g. 3rd year, semester 6" /></div>
         <div className="form-field"><label htmlFor="known-languages">Known languages <span className="optional-mark">Optional</span></label><input id="known-languages" value={form.known_languages} onChange={handleChange('known_languages')} placeholder="Python, Java, C++" /></div>
+        <div className="form-field"><label htmlFor="leetcode-username">LeetCode username <span className="optional-mark">Optional</span></label><input id="leetcode-username" value={form.leetcode_username} onChange={handleChange('leetcode_username')} placeholder="your-public-username" /></div>
         <div className="form-field"><label htmlFor="target-role">Target role</label><input id="target-role" value={form.target_role} onChange={handleChange('target_role')} placeholder="e.g. Product engineer" /></div>
         <div className="form-field"><label htmlFor="target-date">Target date</label><input id="target-date" type="date" value={form.target_date} onChange={handleChange('target_date')} /></div>
         <div className="form-field"><label htmlFor="weekly-hours">Weekly study hours</label><input id="weekly-hours" type="number" min="1" max="80" value={form.weekly_hours} onChange={handleChange('weekly_hours')} /></div>
@@ -138,7 +141,7 @@ function Profile({ profile, loading, error, onSaved }) {
   if (loading) return <div className="profile-page"><div className="page-heading"><div><div className="eyebrow">Student profile</div><h2>Loading your profile.</h2></div></div><div className="card"><div className="skeleton" /><div className="skeleton" /><div className="skeleton short" /></div></div>
   if (error && !profile) return <div className="profile-page"><div className="page-heading"><div><div className="eyebrow">Student profile</div><h2>We could not load your profile.</h2><p>{error}</p></div></div><div className="error">Your session may have expired. Sign out and sign in again to load your saved profile.</div></div>
 
-  return <div className="profile-page"><div className="page-heading"><div><div className="eyebrow">Student profile</div><h2>Your context, in one place.</h2><p>Keep the details behind your study plan and diagnostic up to date.</p></div>{profile?.department && !editing && <button onClick={() => setEditing(true)}>Edit profile</button>}</div>{editing ? <OnboardingForm profile={profile} mode="profile" onSaved={(saved) => { setEditing(false); onSaved(saved) }} /> : <div className="profile-summary"><div className="profile-summary-head"><div><span className="stat-label">Department</span><strong>{profile.department}</strong></div><div><span className="stat-label">Target role</span><strong>{profile.target_role || 'Not set'}</strong></div></div><div className="profile-detail-grid"><div><span className="stat-label">Target date</span><strong>{profile.target_date || 'Not set'}</strong></div><div><span className="stat-label">Weekly hours</span><strong>{profile.weekly_hours || 'Not set'}</strong></div><div><span className="stat-label">Year / semester</span><strong>{profile.year_or_semester || 'Not set'}</strong></div><div><span className="stat-label">Known languages</span><strong>{profile.known_languages?.join(', ') || 'Not set'}</strong></div></div></div>}</div>
+  return <div className="profile-page"><div className="page-heading"><div><div className="eyebrow">Student profile</div><h2>Your context, in one place.</h2><p>Keep the details behind your study plan and diagnostic up to date.</p></div>{profile?.department && !editing && <button onClick={() => setEditing(true)}>Edit profile</button>}</div>{editing ? <OnboardingForm profile={profile} mode="profile" onSaved={(saved) => { setEditing(false); onSaved(saved) }} /> : <div className="profile-summary"><div className="profile-summary-head"><div><span className="stat-label">Department</span><strong>{profile.department}</strong></div><div><span className="stat-label">Target role</span><strong>{profile.target_role || 'Not set'}</strong></div></div><div className="profile-detail-grid"><div><span className="stat-label">Target date</span><strong>{profile.target_date || 'Not set'}</strong></div><div><span className="stat-label">Weekly hours</span><strong>{profile.weekly_hours || 'Not set'}</strong></div><div><span className="stat-label">Year / semester</span><strong>{profile.year_or_semester || 'Not set'}</strong></div><div><span className="stat-label">Known languages</span><strong>{profile.known_languages?.join(', ') || 'Not set'}</strong></div><div><span className="stat-label">LeetCode username</span><strong>{profile.leetcode_username || 'Not set'}</strong></div></div></div>}</div>
 }
 
 function Dashboard({ profile }) {
@@ -298,6 +301,54 @@ function Planner() {
   return <section className="planner-panel"><div className="planner-header"><div><div className="eyebrow">Weekly planner</div><h2>Your study week</h2><p>Small, focused blocks arranged around your available time.</p></div><button disabled={loading || generating} onClick={generate}>{generating ? 'Saving...' : 'Generate this week\'s plan'}</button></div>{message && <p className="planner-message">{message}</p>}{loading && <div className="planner-loading"><div className="skeleton" /><div className="skeleton" /><div className="skeleton short" /></div>}{!loading && !plan && <div className="planner-empty"><strong>No plan for this week yet.</strong><span>Generate a plan to place your next study blocks.</span></div>}{!loading && plan && <div className="week-grid">{days.map((day) => <div className="day-column" key={day}><h3>{['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][day]}</h3>{plan.sessions.filter((item) => item.day_of_week === day).map((item) => <article className={`session ${item.status}`} key={item.id}><strong>{item.topic_id}</strong><span>{item.start_time} · {item.duration_minutes} min</span>{item.status === 'scheduled' && <div className="session-actions"><button disabled={updatingId === item.id} onClick={() => updateSession(item.id, 'complete')}>{updatingId === item.id ? 'Saving...' : 'Complete'}</button><button disabled={updatingId === item.id} className="secondary" onClick={() => updateSession(item.id, 'skip')}>Skip</button></div>}<small>{item.status}</small></article>)}</div>)}</div>}</section>
 }
 
+function CodingPractice() {
+  const { session } = useAuthStore()
+  const [assignments, setAssignments] = useState([])
+  const [message, setMessage] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [working, setWorking] = useState(null)
+  const token = session?.access_token
+
+  async function loadAssignments() {
+    const data = await apiRequest('/coding/assignments', { method: 'GET' }, token)
+    setAssignments(data)
+  }
+
+  useEffect(() => {
+    loadAssignments().catch((error) => setMessage(error.message)).finally(() => setLoading(false))
+  }, [token])
+
+  async function assign() {
+    setWorking('assign')
+    setMessage('')
+    try {
+      const created = await apiRequest('/coding/assign', { method: 'POST' }, token)
+      setAssignments((current) => [created, ...current])
+      setMessage('Problem assigned.')
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setWorking(null)
+    }
+  }
+
+  async function verify(id) {
+    setWorking(id)
+    setMessage('Checking LeetCode submissions...')
+    try {
+      const updated = await apiRequest(`/coding/assignments/${id}/verify`, { method: 'POST' }, token)
+      setAssignments((current) => current.map((item) => item.id === id ? { ...item, ...updated } : item))
+      setMessage(updated.message || 'Verification complete.')
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setWorking(null)
+    }
+  }
+
+  return <div className="coding-page"><div className="page-heading"><div><div className="eyebrow">LeetCode verified</div><h2>Coding practice</h2><p>Solve assigned problems on LeetCode, then verify an Accepted submission here.</p></div><button disabled={working === 'assign'} onClick={assign}>{working === 'assign' ? 'Saving...' : 'Assign a problem'}</button></div>{message && <p className="planner-message">{message}</p>}{loading ? <div className="card"><div className="skeleton" /><div className="skeleton short" /></div> : assignments.length === 0 ? <div className="card empty-inline"><strong>No coding problems assigned yet.</strong><span>Assign one to begin.</span></div> : <div className="coding-list">{assignments.map((assignment) => <article className="coding-card" key={assignment.id}><div><span className="coding-difficulty">{assignment.problem?.difficulty}</span><h3>{assignment.problem?.title}</h3><p>{assignment.status === 'verified' ? 'Accepted submission verified.' : assignment.status === 'failed_to_verify' ? 'No Accepted submission found after assignment.' : 'Pending verification.'}</p></div><div className="coding-actions"><a href={`https://leetcode.com/problems/${assignment.problem?.leetcode_slug}/`} target="_blank" rel="noreferrer">Solve on LeetCode ↗</a>{assignment.status !== 'verified' && <button disabled={working === assignment.id} onClick={() => verify(assignment.id)}>{working === assignment.id ? 'Checking...' : 'Check my submission'}</button>}<span className={`status-pill ${assignment.status}`}>{assignment.status.replaceAll('_', ' ')}</span></div></article>)}</div>}</div>
+}
+
 function AppShell() {
   const { session, clearSession } = useAuthStore()
   const currentToken = session?.access_token
@@ -327,6 +378,7 @@ function AppShell() {
     if (pathname === '/diagnostic') return 'Diagnostic'
     if (pathname === '/planner') return 'Planner'
     if (pathname === '/profile') return 'Profile'
+    if (pathname === '/coding') return 'Coding Practice'
     if (pathname === '/review') return 'Review'
     if (pathname === '/interview') return 'Interview'
     return 'Dashboard'
@@ -355,6 +407,7 @@ function AppShell() {
           {page === 'Diagnostic' && <Diagnostic profile={profile} />}
           {page === 'Planner' && <Planner />}
           {page === 'Profile' && <Profile profile={profile} loading={profileLoading} error={profileError} onSaved={setProfile} />}
+          {page === 'Coding Practice' && <CodingPractice />}
           {page === 'Review' && <div className="card"><h3>Review</h3><p>Review workspace is coming soon.</p></div>}
           {page === 'Interview' && <div className="card"><h3>Interview</h3><p>Interview workspace is coming soon.</p></div>}
         </div>

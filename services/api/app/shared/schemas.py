@@ -20,6 +20,7 @@ class UserProfile(BaseModel):
     department: str | None = None
     year_or_semester: str | None = None
     known_languages: list[str] | None = None
+    leetcode_username: str | None = None
 
 
 class UserProfileUpdate(BaseModel):
@@ -30,6 +31,7 @@ class UserProfileUpdate(BaseModel):
     department: str | None = None
     year_or_semester: str | None = None
     known_languages: list[str] | None = None
+    leetcode_username: str | None = None
 
 
 class MeResponse(UserProfile):
