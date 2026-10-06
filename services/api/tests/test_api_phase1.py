@@ -64,6 +64,15 @@ def test_attempt_flow_updates_skill_vector() -> None:
         assert data["user_id"] == "user-123"
         assert "topic-1" in data["skill_vector"]
         assert data["skill_vector"]["topic-1"]["mastery"] >= 0.0
+
+        skills_resp = client.get("/skills/me")
+        assert skills_resp.status_code == 200, skills_resp.text
+        skills_data = skills_resp.json()
+        assert "topic-1" in skills_data
+        assert skills_data["topic-1"]["topic_id"] == "topic-1"
+        assert isinstance(skills_data["topic-1"]["mastery"], float)
+        assert isinstance(skills_data["topic-1"]["confidence"], float)
+        assert "updated_at" in skills_data["topic-1"]
     finally:
         app.dependency_overrides.clear()
 

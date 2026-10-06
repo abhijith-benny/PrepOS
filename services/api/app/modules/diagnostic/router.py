@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.deps import get_current_user
 from app.shared.events import DiagnosticCompleted
 from app.shared.learner_model import EVENT_BUS, apply_evidence
+from app.shared.repositories import coding_repository
 from app.shared.repositories.retry import retry_supabase
 
 from .adaptive import AdaptiveDiagnostic
@@ -29,7 +30,7 @@ SECTION_DEFINITIONS = [
     {"id": "aptitude", "label": "Aptitude", "description": "Quantitative and logical reasoning", "category": "aptitude"},
     {"id": "computer_aptitude", "label": "Computer Aptitude", "description": "Computer science fundamentals", "category": "CS core"},
     {"id": "english", "label": "English", "description": "Grammar, vocabulary, and reading comprehension", "category": "English"},
-    {"id": "coding", "label": "Coding", "description": "Read code, predict output, and reason about complexity", "category": "DSA"},
+    {"id": "coding", "label": "Coding", "description": "Solve a real LeetCode coding problem", "category": "DSA"},
 ]
 SECTION_BY_ID = {section["id"]: section for section in SECTION_DEFINITIONS}
 SECTION_BY_CATEGORY = {section["category"]: section for section in SECTION_DEFINITIONS}
@@ -67,12 +68,13 @@ def _new_sections(counts: dict[str, int] | None = None) -> dict[str, dict[str, A
     counts = counts or {}
     sections = {}
     for index, definition in enumerate(SECTION_DEFINITIONS):
+        default_limit = 1 if definition["id"] == "coding" else DEFAULT_SECTION_COUNT
         sections[definition["id"]] = {
             "label": definition["label"],
             "category": definition["category"],
             "status": "in_progress" if index == 0 else "locked",
             "question_count": 0,
-            "question_limit": int(counts.get(definition["id"], DEFAULT_SECTION_COUNT)),
+            "question_limit": int(counts.get(definition["id"], default_limit)),
             "correct_count": 0,
             "answers": [],
         }
@@ -88,13 +90,28 @@ class SessionStore:
             self.supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
 
     def _questions(self) -> list[dict[str, Any]]:
+        cached = getattr(self, "_cached_questions", None)
+        if cached:
+            return cached
         if not self.supabase:
             return QUESTIONS
-        rows = retry_supabase(lambda: self.supabase.table("questions").select("id,topic_id,difficulty,body,options,answer,topics(category)").execute()).data
-        for row in rows:
-            topic = row.pop("topics", None) or {}
-            row["category"] = topic.get("category", "")
-        return rows
+        try:
+            rows = retry_supabase(
+                lambda: self.supabase.table("questions")
+                .select("id,topic_id,difficulty,body,options,answer,topics(category)")
+                .execute()
+            ).data
+            for row in rows:
+                topic = row.pop("topics", None) or {}
+                row["category"] = topic.get("category", "")
+            if rows:
+                self._cached_questions = rows
+                return rows
+        except Exception:
+            if cached:
+                return cached
+            return QUESTIONS
+        return QUESTIONS
 
     def start(self, user_id: str, config: dict[str, Any]) -> dict[str, Any]:
         existing = self._find_in_progress(user_id)
@@ -113,7 +130,10 @@ class SessionStore:
         }
         self._save_local(session)
         if self.supabase:
-            retry_supabase(lambda: self.supabase.table("diagnostic_sessions").insert({key: value for key, value in session.items() if key != "answers"}).execute())
+            try:
+                retry_supabase(lambda: self.supabase.table("diagnostic_sessions").insert({key: value for key, value in session.items() if key != "answers"}).execute())
+            except Exception:
+                pass
         return _public_session(session)
 
     def _save_local(self, session: dict[str, Any]) -> None:
@@ -131,9 +151,12 @@ class SessionStore:
         if local:
             return local
         if self.supabase:
-            rows = retry_supabase(lambda: self.supabase.table("diagnostic_sessions").select("*").eq("user_id", user_id).eq("status", "in_progress").limit(1).execute()).data
-            if rows:
-                return self.sessions.setdefault(rows[0]["id"], self._hydrate(rows[0]))
+            try:
+                rows = retry_supabase(lambda: self.supabase.table("diagnostic_sessions").select("*").eq("user_id", user_id).eq("status", "in_progress").limit(1).execute()).data
+                if rows:
+                    return self.sessions.setdefault(rows[0]["id"], self._hydrate(rows[0]))
+            except Exception:
+                pass
         return None
 
     def get(self, session_id: str, user_id: str) -> dict[str, Any]:
@@ -141,15 +164,23 @@ class SessionStore:
         if session and session["user_id"] == user_id:
             return session
         if self.supabase:
-            rows = retry_supabase(lambda: self.supabase.table("diagnostic_sessions").select("*").eq("id", session_id).eq("user_id", user_id).limit(1).execute()).data
-            if rows:
-                return self.sessions.setdefault(session_id, self._hydrate(rows[0]))
+            try:
+                rows = retry_supabase(lambda: self.supabase.table("diagnostic_sessions").select("*").eq("id", session_id).eq("user_id", user_id).limit(1).execute()).data
+                if rows:
+                    return self.sessions.setdefault(session_id, self._hydrate(rows[0]))
+            except Exception:
+                pass
+        if session and session["user_id"] == user_id:
+            return session
         raise HTTPException(status_code=404, detail="Diagnostic session not found")
 
     def save(self, session: dict[str, Any]) -> None:
         self._save_local(session)
         if self.supabase:
-            retry_supabase(lambda: self.supabase.table("diagnostic_sessions").update({key: session[key] for key in ("status", "completed_at", "sections", "result")}).eq("id", session["id"]).eq("user_id", session["user_id"]).execute())
+            try:
+                retry_supabase(lambda: self.supabase.table("diagnostic_sessions").update({key: session[key] for key in ("status", "completed_at", "sections", "result")}).eq("id", session["id"]).eq("user_id", session["user_id"]).execute())
+            except Exception:
+                pass
 
 
 STORE = SessionStore()
@@ -202,9 +233,62 @@ def ping() -> dict[str, str]:
     return {"module": "diagnostic", "status": "ready"}
 
 
+def _get_or_assign_coding_problem(session: dict[str, Any], user_id: str) -> dict[str, Any]:
+    if session.get("coding_problem"):
+        return session["coding_problem"]
+    problem = None
+    assignment_id = None
+    try:
+        assignment = coding_repository.choose(user_id, [])
+        if assignment:
+            problem = assignment.get("problem")
+            assignment_id = assignment.get("id")
+    except Exception:
+        pass
+    if not problem:
+        if STORE.supabase:
+            try:
+                rows = retry_supabase(
+                    lambda: STORE.supabase.table("coding_problems").select("*").limit(10).execute()
+                ).data
+                if rows:
+                    easy = [r for r in rows if r.get("difficulty") == "Easy"]
+                    problem = easy[0] if easy else rows[0]
+            except Exception:
+                pass
+        if not problem and hasattr(coding_repository, "problems") and coding_repository.problems:
+            problem = coding_repository.problems[0]
+    if not problem:
+        problem = {
+            "id": "two-sum",
+            "title": "Two Sum",
+            "leetcode_slug": "two-sum",
+            "difficulty": "Easy",
+            "topic_id": "topic-1",
+        }
+    prob_dict = {
+        "id": problem["id"],
+        "title": problem.get("title", "Coding Problem"),
+        "leetcode_slug": problem.get("leetcode_slug", "two-sum"),
+        "difficulty": problem.get("difficulty", "Easy"),
+        "topic_id": problem.get("topic_id"),
+        "assignment_id": assignment_id,
+    }
+    session["coding_problem"] = prob_dict
+    return prob_dict
+
+
 @router.post("/sessions", status_code=201)
 def start_session(current_user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
-    return STORE.start(_user_id(current_user), {"section_counts": {section["id"]: DEFAULT_SECTION_COUNT for section in SECTION_DEFINITIONS}})
+    return STORE.start(
+        _user_id(current_user),
+        {
+            "section_counts": {
+                section["id"]: (1 if section["id"] == "coding" else DEFAULT_SECTION_COUNT)
+                for section in SECTION_DEFINITIONS
+            }
+        },
+    )
 
 
 @router.get("/sessions/{session_id}/next")
@@ -214,6 +298,49 @@ def next_question(session_id: str, current_user: dict[str, Any] = Depends(get_cu
     if definition is None:
         return {"done": True, "question": None, "progress": len(session["answers"]), "sections": session["sections"]}
     state = session["sections"][definition["id"]]
+
+    if definition["id"] == "coding":
+        state["question_limit"] = 1
+        coding_answers = [a for a in session["answers"] if a.get("section") == "coding"]
+        if coding_answers or state.get("question_count", 0) >= 1:
+            state["status"] = "completed"
+            STORE.save(session)
+            return {
+                "done": False,
+                "section_complete": True,
+                "section": {"id": definition["id"], "label": definition["label"]},
+                "question": None,
+                "progress": state["question_count"],
+            }
+        prob = _get_or_assign_coding_problem(session, _user_id(current_user))
+        STORE.save(session)
+        leetcode_q = {
+            "id": prob["id"],
+            "type": "leetcode",
+            "title": prob["title"],
+            "leetcode_slug": prob["leetcode_slug"],
+            "difficulty": prob["difficulty"],
+            "topic_id": prob.get("topic_id"),
+            "body": f"Solve {prob['title']} on LeetCode ({prob['difficulty']})",
+            "leetcode_url": f"https://leetcode.com/problems/{prob['leetcode_slug']}/",
+            "assignment_id": prob.get("assignment_id"),
+            "options": [],
+        }
+        return {
+            "done": False,
+            "progress": 0,
+            "section": {
+                "id": definition["id"],
+                "label": definition["label"],
+                "description": definition["description"],
+                "index": SECTION_DEFINITIONS.index(definition) + 1,
+                "total": len(SECTION_DEFINITIONS),
+                "question_count": 0,
+                "question_limit": 1,
+            },
+            "question": leetcode_q,
+        }
+
     question = _section_engine(session, definition).next_question()
     if question is None:
         state["status"] = "completed"
@@ -227,13 +354,49 @@ def answer_question(session_id: str, payload: AnswerCreate, current_user: dict[s
     session = STORE.get(session_id, _user_id(current_user))
     if session["status"] != "in_progress":
         raise HTTPException(status_code=409, detail="Diagnostic session is not in progress")
+    definition = _current_section(session)
+    if definition is None:
+        raise HTTPException(status_code=409, detail="Diagnostic session is complete")
+
+    if definition["id"] == "coding":
+        state = session["sections"]["coding"]
+        prob = _get_or_assign_coding_problem(session, _user_id(current_user))
+        is_correct = str(payload.answer).strip().lower() in ("verified", "solved", "correct", "a", "true", "1")
+        answer = {
+            "question_id": payload.question_id,
+            "correct": is_correct,
+            "time_taken_s": payload.time_taken_s,
+            "section": "coding",
+            "type": "leetcode",
+            "problem_id": prob["id"],
+        }
+        session["answers"].append(answer)
+        state["question_count"] += 1
+        state["correct_count"] += int(is_correct)
+        state.setdefault("answers", []).append(answer)
+        state["status"] = "completed"
+        if prob.get("assignment_id") and is_correct:
+            try:
+                coding_repository.update(_user_id(current_user), prob["assignment_id"], "verified")
+            except Exception:
+                pass
+        next_index = SECTION_DEFINITIONS.index(definition) + 1
+        if next_index < len(SECTION_DEFINITIONS):
+            session["sections"][SECTION_DEFINITIONS[next_index]["id"]]["status"] = "in_progress"
+        STORE.save(session)
+        next_definition = _current_section(session)
+        return {
+            "correct": is_correct,
+            "progress": len(session["answers"]),
+            "section_complete": True,
+            "section": {"id": definition["id"], "label": definition["label"]},
+            "next_section": {"id": next_definition["id"], "label": next_definition["label"]} if next_definition else None,
+        }
+
     question = next((item for item in STORE._questions() if item["id"] == payload.question_id), None)
     if question is None:
         raise HTTPException(status_code=404, detail="Question not found")
-    definition = _current_section(session)
     question_section = _section_for_question(question)
-    if definition is None:
-        raise HTTPException(status_code=409, detail="Diagnostic session is complete")
     if question_section["id"] != definition["id"]:
         raise HTTPException(status_code=409, detail=f"Complete {definition['label']} before starting {question_section['label']}")
     engine = _section_engine(session, definition)
@@ -273,9 +436,25 @@ def _section_reports(session: dict[str, Any], mastery: dict[str, float], questio
     for definition in SECTION_DEFINITIONS:
         state = session["sections"][definition["id"]]
         topic_ids = {question["topic_id"] for question in questions if _section_for_question(question)["id"] == definition["id"]}
+        if definition["id"] == "coding":
+            prob = session.get("coding_problem") or {}
+            prob_topic = prob.get("topic_id")
+            if prob_topic and prob_topic not in topic_ids:
+                topic_ids.add(prob_topic)
+                topic_names[prob_topic] = prob.get("title", prob_topic)
         section_mastery = {topic: mastery.get(topic, 0.5) for topic in topic_ids}
         ranked = sorted(section_mastery, key=section_mastery.get)
-        reports.append({"id": definition["id"], "label": definition["label"], "description": definition["description"], "question_count": state["question_count"], "question_limit": state["question_limit"], "correct_count": state["correct_count"], "score": state["correct_count"] / max(1, state["question_count"]), "strong_topics": [topic_names[topic] for topic in ranked[-2:]], "weak_topics": [topic_names[topic] for topic in ranked[:2]]})
+        reports.append({
+            "id": definition["id"],
+            "label": definition["label"],
+            "description": definition["description"],
+            "question_count": state["question_count"],
+            "question_limit": state["question_limit"],
+            "correct_count": state["correct_count"],
+            "score": state["correct_count"] / max(1, state["question_count"]),
+            "strong_topics": [topic_names.get(topic, topic) for topic in ranked[-2:]] if ranked else [],
+            "weak_topics": [topic_names.get(topic, topic) for topic in ranked[:2]] if ranked else [],
+        })
     return reports
 
 
@@ -289,11 +468,34 @@ def complete_session(session_id: str, current_user: dict[str, Any] = Depends(get
     questions = STORE._questions()
     mastery: dict[str, float] = {}
     for definition in SECTION_DEFINITIONS:
-        mastery.update(_section_engine(session, definition).mastery())
+        if definition["id"] == "coding":
+            coding_answers = [a for a in session["answers"] if a.get("section") == "coding"]
+            is_correct = any(a.get("correct") for a in coding_answers) if coding_answers else False
+            coding_score = 0.85 if is_correct else 0.35
+            prob = session.get("coding_problem") or {}
+            prob_topic = prob.get("topic_id")
+            dsa_topic_ids = {q["topic_id"] for q in questions if _section_for_question(q)["id"] == "coding"}
+            if not dsa_topic_ids and prob_topic:
+                dsa_topic_ids = {prob_topic}
+            for tid in dsa_topic_ids:
+                mastery[tid] = coding_score if tid == prob_topic else (coding_score * 0.9)
+            if prob_topic:
+                mastery[prob_topic] = coding_score
+        else:
+            mastery.update(_section_engine(session, definition).mastery())
     for topic_id, value in mastery.items():
         apply_evidence(session["user_id"], topic_id, value, "diagnostic", 1.0)
     assignment = assign_profile(_profile_vector(mastery, questions), PROFILE)
-    result = {"mastery": mastery, "confidence": sum(_section_engine(session, definition).confidence() for definition in SECTION_DEFINITIONS) / len(SECTION_DEFINITIONS), "sections": _section_reports(session, mastery, questions), **assignment}
+    
+    conf_list = [
+        _section_engine(session, d).confidence()
+        for d in SECTION_DEFINITIONS
+        if d["id"] != "coding"
+    ]
+    conf_list.append(0.8 if any(a.get("correct") for a in session["answers"] if a.get("section") == "coding") else 0.5)
+    confidence = sum(conf_list) / len(conf_list)
+    
+    result = {"mastery": mastery, "confidence": confidence, "sections": _section_reports(session, mastery, questions), **assignment}
     session.update({"status": "completed", "completed_at": datetime.now(timezone.utc).isoformat(), "result": result})
     STORE.save(session)
     if STORE.supabase:
@@ -309,6 +511,42 @@ def session_report(session_id: str, current_user: dict[str, Any] = Depends(get_c
         raise HTTPException(status_code=409, detail="Diagnostic session is not complete")
     mastery = session["result"]["mastery"]
     return {**session["result"], "weak_topics": sorted(mastery, key=mastery.get)}
+
+
+@router.get("/sessions/{session_id}/coding-suggestions")
+def coding_suggestions(
+    session_id: str,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    limit: int = 3,
+) -> dict[str, Any]:
+    """Return up to *limit* real LeetCode problems mapped to the topics the user
+    scored weakest on in the Coding section of this diagnostic session.
+
+    Problems are returned as a preview only — no assignment is created here.
+    The caller should direct the user to POST /coding/assign (scoped to the
+    returned topic_ids) to actually create assignments.
+    """
+    session = STORE.get(session_id, _user_id(current_user))
+    result = session.get("result")
+    if not result:
+        raise HTTPException(status_code=409, detail="Diagnostic session is not complete")
+
+    # Find the Coding section report (category = DSA)
+    coding_report = next(
+        (sec for sec in (result.get("sections") or []) if sec.get("id") == "coding"),
+        None,
+    )
+    weak_topic_ids: list[str] = []
+    if coding_report:
+        weak_topic_ids = coding_report.get("weak_topics") or []
+
+    problems = coding_repository.suggest_problems(weak_topic_ids, limit=min(limit, 3))
+    return {
+        "session_id": session_id,
+        "weak_topic_ids": weak_topic_ids,
+        "problems": problems,
+        "has_problems": bool(problems),
+    }
 
 
 @router.get("/latest")

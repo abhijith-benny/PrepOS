@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 
 from dotenv import load_dotenv
 import pytest
@@ -19,6 +19,7 @@ def in_memory_repositories(request: pytest.FixtureRequest, monkeypatch: pytest.M
 	import app.shared.events as events_module
 	import app.shared.learner_model as learner_model
 	from app.shared.events import EventBus
+	from app.shared.repositories.coding import InMemoryCodingRepository
 	from app.shared.repositories.in_memory import InMemoryAttemptRepository, InMemoryEventRepository, InMemorySkillRepository
 	from app.shared.repositories.scheduler import InMemoryProfileRepository, InMemoryStudyPlanRepository, InMemoryTopicRepository
 
@@ -29,6 +30,7 @@ def in_memory_repositories(request: pytest.FixtureRequest, monkeypatch: pytest.M
 	monkeypatch.setattr(learner_model, "EVENT_BUS", EventBus())
 	monkeypatch.setattr(main_module, "EVENT_BUS", learner_model.EVENT_BUS)
 	monkeypatch.setattr(diagnostic_router, "EVENT_BUS", learner_model.EVENT_BUS)
+	monkeypatch.setattr(diagnostic_router, "coding_repository", InMemoryCodingRepository())
 	monkeypatch.setattr(diagnostic_router.STORE, "supabase", None)
 	monkeypatch.setattr(diagnostic_router.STORE, "legacy_completion", True)
 	diagnostic_router.STORE.sessions.clear()
@@ -39,3 +41,4 @@ def in_memory_repositories(request: pytest.FixtureRequest, monkeypatch: pytest.M
 	app.dependency_overrides.clear()
 	yield
 	app.dependency_overrides.clear()
+

@@ -167,11 +167,17 @@ function Diagnostic({ profile }) {
   const [question, setQuestion] = useState(null)
   const [progress, setProgress] = useState(0)
   const [report, setReport] = useState(null)
+  const [codingSuggestions, setCodingSuggestions] = useState(null)
   const [startedAt, setStartedAt] = useState(Date.now())
   const [error, setError] = useState('')
   const [answering, setAnswering] = useState(false)
   const [currentSection, setCurrentSection] = useState(null)
   const [sectionTransition, setSectionTransition] = useState(null)
+  const [verifying, setVerifying] = useState(false)
+  const [verifyMessage, setVerifyMessage] = useState('')
+  const [verifyStatus, setVerifyStatus] = useState('idle')
+  const [inputLeetcodeUser, setInputLeetcodeUser] = useState('')
+  const [savingUser, setSavingUser] = useState(false)
 
   const token = session?.access_token
 
@@ -206,6 +212,60 @@ function Diagnostic({ profile }) {
     setCurrentSection(next.section || null)
     setStartedAt(Date.now())
     setSectionTransition(null)
+    setVerifyMessage('')
+    setVerifyStatus('idle')
+  }
+
+  async function verifyCodingProblem(assignmentId) {
+    if (!assignmentId) {
+      setVerifyStatus('error')
+      setVerifyMessage('No assignment active for this problem yet.')
+      return
+    }
+    setVerifying(true)
+    setVerifyMessage('Checking your recent LeetCode submissions...')
+    setVerifyStatus('info')
+    try {
+      const updated = await apiRequest(`/coding/assignments/${assignmentId}/verify`, { method: 'POST' }, token)
+      if (updated.status === 'verified') {
+        setVerifyStatus('success')
+        setVerifyMessage('Accepted submission verified! Submitting coding section...')
+        setTimeout(() => {
+          answer('verified')
+        }, 1200)
+      } else {
+        setVerifyStatus('error')
+        setVerifyMessage(updated.message || 'No Accepted submission found on LeetCode after assignment yet. Submit your solution on LeetCode first, or continue below.')
+      }
+    } catch (err) {
+      setVerifyStatus('error')
+      setVerifyMessage(err.message || 'Failed to verify submission.')
+    } finally {
+      setVerifying(false)
+    }
+  }
+
+  async function saveUserAndVerify(assignmentId) {
+    if (!inputLeetcodeUser.trim()) return
+    setSavingUser(true)
+    setVerifyStatus('info')
+    setVerifyMessage('Saving LeetCode username...')
+    try {
+      await apiRequest('/me', {
+        method: 'PATCH',
+        body: JSON.stringify({ leetcode_username: inputLeetcodeUser.trim() }),
+      }, token)
+      if (profile) {
+        profile.leetcode_username = inputLeetcodeUser.trim()
+      }
+      setVerifyMessage('Username saved! Now verifying submissions...')
+      await verifyCodingProblem(assignmentId)
+    } catch (err) {
+      setVerifyStatus('error')
+      setVerifyMessage(err.message || 'Failed to save username.')
+    } finally {
+      setSavingUser(false)
+    }
   }
 
   async function answer(value) {
@@ -222,6 +282,10 @@ function Diagnostic({ profile }) {
         const completed = await apiRequest(`/diagnostic/sessions/${sessionId}/complete`, { method: 'POST' }, token)
         setReport(completed)
         setQuestion(null)
+        // Fetch coding suggestions in the background — non-blocking.
+        apiRequest(`/diagnostic/sessions/${sessionId}/coding-suggestions`, { method: 'GET' }, token)
+          .then((data) => setCodingSuggestions(data))
+          .catch(() => setCodingSuggestions(null))
       } else if (next.section_complete && next.next_section) {
         setQuestion(null)
         setSectionTransition(next.next_section)
@@ -238,12 +302,210 @@ function Diagnostic({ profile }) {
   }
 
   if (report) {
-    return <section className="diagnostic-panel report-panel"><div className="eyebrow">Diagnostic complete</div><div className="report-heading"><div><h2>{report.cluster_label}</h2><p>Your first profile is ready. Use it as a starting point, not a ceiling.</p></div><div className="confidence-ring"><strong>{Math.round(report.confidence * 100)}%</strong><span>confidence</span></div></div><div className="section-report-list">{(report.sections || []).map((section) => <article className="section-report" key={section.id}><div><strong>{section.label}</strong><span>{section.description}</span></div><b>{section.correct_count}/{section.question_limit}</b><div className="section-score"><i style={{ width: `${section.score * 100}%` }} /></div><small>Strong: {section.strong_topics.join(', ') || 'Building signal'} · Focus: {section.weak_topics.join(', ') || 'Building signal'}</small></article>)}</div><h3 className="report-subheading">Topic mastery</h3><div className="mastery-list">{Object.entries(report.mastery).map(([topic, value]) => <div className="mastery-row" key={topic}><span>{topic}</span><div className="bar"><i style={{ width: `${value * 100}%` }} /></div><strong>{Math.round(value * 100)}%</strong></div>)}</div><button className="secondary" onClick={() => { setReport(null); setSessionId(null); setQuestion(null); setProgress(0) }}>Start another</button></section>
+    const codingSection = (report.sections || []).find((s) => s.id === 'coding')
+    const suggestedProblems = codingSuggestions?.has_problems ? codingSuggestions.problems : []
+    return (
+      <section className="diagnostic-panel report-panel">
+        <div className="eyebrow">Diagnostic complete</div>
+        <div className="report-heading">
+          <div><h2>{report.cluster_label}</h2><p>Your first profile is ready. Use it as a starting point, not a ceiling.</p></div>
+          <div className="confidence-ring"><strong>{Math.round(report.confidence * 100)}%</strong><span>confidence</span></div>
+        </div>
+        <div className="section-report-list">
+          {(report.sections || []).map((section) => (
+            <article className="section-report" key={section.id}>
+              <div>
+                <strong>{section.label}</strong>
+                <span>{section.description}</span>
+              </div>
+              <b>{section.correct_count}/{section.question_limit}</b>
+              <div className="section-score"><i style={{ width: `${section.score * 100}%` }} /></div>
+              <small>Strong: {section.strong_topics.join(', ') || 'Building signal'} · Focus: {section.weak_topics.join(', ') || 'Building signal'}</small>
+              {section.id === 'coding' && suggestedProblems.length > 0 && (
+                <div className="coding-cta">
+                  <div className="coding-cta-header">
+                    <span className="coding-cta-eyebrow">🎯 Targeted LeetCode practice</span>
+                    <p className="coding-cta-blurb">
+                      Based on your weakest coding topics, start with these problems.
+                      Solve them on LeetCode, then verify your submission in Coding Practice.
+                    </p>
+                  </div>
+                  <ul className="coding-cta-list">
+                    {suggestedProblems.map((problem) => (
+                      <li key={problem.id} className="coding-cta-item">
+                        <span className={`coding-difficulty coding-diff-${(problem.difficulty || 'easy').toLowerCase()}`}>{problem.difficulty}</span>
+                        <a
+                          href={`https://leetcode.com/problems/${problem.leetcode_slug}/`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="coding-cta-link"
+                        >
+                          {problem.title} ↗
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                  <a href="/coding" className="coding-cta-action">
+                    Practice these on LeetCode <span aria-hidden="true">→</span>
+                  </a>
+                </div>
+              )}
+            </article>
+          ))}
+        </div>
+        <h3 className="report-subheading">Topic mastery</h3>
+        <div className="mastery-list">
+          {Object.entries(report.mastery).map(([topic, value]) => (
+            <div className="mastery-row" key={topic}>
+              <span>{topic}</span>
+              <div className="bar"><i style={{ width: `${value * 100}%` }} /></div>
+              <strong>{Math.round(value * 100)}%</strong>
+            </div>
+          ))}
+        </div>
+        <button className="secondary" onClick={() => { setReport(null); setCodingSuggestions(null); setSessionId(null); setQuestion(null); setProgress(0) }}>Start another</button>
+      </section>
+    )
   }
 
   if (!sessionId) return <section className="diagnostic-panel diagnostic-start"><div className="eyebrow">Placement diagnostic</div><div className="diagnostic-kicker">01 <span>/</span> 04 sections</div><h2>{profile?.department ? 'Find your starting point' : 'Complete your profile first'}</h2><p>{profile?.department ? 'Answer a focused set of questions so PrepOS can shape your practice plan around the skills that matter most.' : 'Add your department and context on your Profile page before starting the placement test.'}</p>{error && <p className="error">{error}</p>}{profile?.department ? <button onClick={start}>Start diagnostic <span aria-hidden="true">→</span></button> : <a className="profile-gate" href="/profile">Go to Profile <span aria-hidden="true">→</span></a>}</section>
   if (sectionTransition) return <section className="diagnostic-panel section-transition"><div className="eyebrow">Section complete</div><div className="transition-mark">✓</div><h2>Nice work. {sectionTransition.label} is complete.</h2><p>Take a breath, then continue into the next part of the placement test.</p><button onClick={() => loadNext()}>Continue to {sectionTransition.label}</button></section>
-  return <section className="diagnostic-panel question-panel"><div className="section-indicator"><span>Section {currentSection?.index || 1} of {currentSection?.total || 4}</span><strong>{currentSection?.label || 'Placement'}</strong><small>{currentSection?.description}</small></div><div className="progress-line"><span>Question {progress + 1} of {currentSection?.question_limit || 10}</span><span className="timer">Adaptive placement</span></div><div className="progress-track"><i style={{ width: `${Math.min((progress / (currentSection?.question_limit || 10)) * 100, 100)}%` }} /></div>{question ? <><div className="question-meta">Topic check <span>•</span> Take your best answer</div><h2>{question.body}</h2><div className="answer-grid">{(question.options || []).map((option, index) => <button disabled={answering} key={option} className="answer-button" onClick={() => answer(option)}><span className="answer-index">{String.fromCharCode(65 + index)}</span><span>{option}</span></button>)}</div></> : <div className="question-loading"><div className="skeleton" /><div className="skeleton short" /></div>}{error && <p className="error">{error}</p>}</section>
+  const isCodingSection = currentSection?.id === 'coding' || question?.type === 'leetcode'
+
+  return (
+    <section className="diagnostic-panel question-panel">
+      <div className="section-indicator">
+        <span>Section {currentSection?.index || 1} of {currentSection?.total || 4}</span>
+        <strong>{currentSection?.label || 'Placement'}</strong>
+        <small>{currentSection?.description}</small>
+      </div>
+      <div className="progress-line">
+        <span>{isCodingSection ? 'Practical Coding Challenge' : `Question ${progress + 1} of ${currentSection?.question_limit || 10}`}</span>
+        <span className="timer">{isCodingSection ? 'LeetCode Verified' : 'Adaptive placement'}</span>
+      </div>
+      <div className="progress-track">
+        <i style={{ width: `${isCodingSection ? 100 : Math.min((progress / (currentSection?.question_limit || 10)) * 100, 100)}%` }} />
+      </div>
+      {question ? (
+        isCodingSection ? (
+          <div className="coding-challenge-container">
+            <div className="question-meta">Section 4 · Coding <span>•</span> Direct LeetCode Problem</div>
+            <div className="coding-challenge-header">
+              <div>
+                <span className="coding-challenge-eyebrow">LeetCode Assessment</span>
+                <h2>{question.title || question.body}</h2>
+              </div>
+              <span className={`coding-difficulty coding-diff-${(question.difficulty || 'easy').toLowerCase()}`}>
+                {question.difficulty || 'Easy'}
+              </span>
+            </div>
+            <p className="coding-challenge-instructions">
+              Solve this problem directly on LeetCode in your preferred programming language. After getting an <strong>Accepted</strong> submission on LeetCode, verify your submission below to record your performance.
+            </p>
+
+            <div className="coding-challenge-card">
+              <div className="coding-challenge-details">
+                <span className="challenge-tag">LeetCode Problem</span>
+                <strong>{question.title || 'Coding Problem'}</strong>
+                <span className="challenge-slug">Slug: <code>{question.leetcode_slug || 'problem'}</code></span>
+              </div>
+              <a
+                href={question.leetcode_url || `https://leetcode.com/problems/${question.leetcode_slug}/`}
+                target="_blank"
+                rel="noreferrer"
+                className="btn-solve-leetcode"
+              >
+                Solve on LeetCode ↗
+              </a>
+            </div>
+
+            {verifyMessage && (
+              <div className={`coding-verify-banner ${verifyStatus}`}>
+                {verifyMessage}
+              </div>
+            )}
+
+            <div className="coding-verify-box">
+              {profile?.leetcode_username ? (
+                <div className="verify-user-active">
+                  <div className="verify-user-info">
+                    <span>LeetCode Username:</span>
+                    <strong>{profile.leetcode_username}</strong>
+                  </div>
+                  <div className="verify-actions">
+                    <button
+                      type="button"
+                      disabled={verifying || answering}
+                      onClick={() => verifyCodingProblem(question.assignment_id)}
+                    >
+                      {verifying ? 'Checking submissions...' : 'Check & Verify Submission'}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={answering || verifying}
+                      onClick={() => answer('skipped')}
+                    >
+                      Continue / Skip verification →
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="verify-user-setup">
+                  <div className="verify-setup-prompt">
+                    <strong>Verify with your LeetCode Account</strong>
+                    <p>Enter your public LeetCode username to verify your Accepted submission:</p>
+                  </div>
+                  <div className="verify-input-row">
+                    <input
+                      type="text"
+                      placeholder="LeetCode username"
+                      value={inputLeetcodeUser}
+                      onChange={(e) => setInputLeetcodeUser(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      disabled={!inputLeetcodeUser.trim() || savingUser || verifying}
+                      onClick={() => saveUserAndVerify(question.assignment_id)}
+                    >
+                      {savingUser ? 'Saving...' : 'Save & Verify'}
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary link-style"
+                    disabled={answering}
+                    onClick={() => answer('skipped')}
+                  >
+                    Continue without LeetCode verification →
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="question-meta">Topic check <span>•</span> Take your best answer</div>
+            <h2>{question.body}</h2>
+            <div className="answer-grid">
+              {(question.options || []).map((option, index) => (
+                <button disabled={answering} key={option} className="answer-button" onClick={() => answer(option)}>
+                  <span className="answer-index">{String.fromCharCode(65 + index)}</span>
+                  <span>{option}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )
+      ) : (
+        <div className="question-loading">
+          <div className="skeleton" />
+          <div className="skeleton short" />
+        </div>
+      )}
+      {error && <p className="error">{error}</p>}
+    </section>
+  )
 }
 
 function Planner() {

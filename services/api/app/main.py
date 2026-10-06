@@ -9,7 +9,15 @@ from app.core.deps import get_current_user
 from app.shared.events import AttemptRecorded
 from app.shared.learner_model import EVENT_BUS, apply_evidence, get_skill_vector
 from app.shared.repositories import attempt_repository, profile_repository
-from app.shared.schemas import AttemptCreate, AttemptResponse, HealthResponse, MeResponse, TopicRead, UserProfileUpdate
+from app.shared.schemas import (
+    AttemptCreate,
+    AttemptResponse,
+    HealthResponse,
+    MeResponse,
+    SkillState,
+    TopicRead,
+    UserProfileUpdate,
+)
 
 app = FastAPI(title="PrepOS API", version="0.1.0")
 
@@ -71,10 +79,10 @@ def list_topics() -> list[TopicRead]:
     return []
 
 
-@app.get("/skills/me")
-def skills_me(current_user=Depends(get_current_user)) -> dict[str, dict[str, float]]:
+@app.get("/skills/me", response_model=dict[str, SkillState])
+def skills_me(current_user=Depends(get_current_user)) -> dict[str, SkillState]:
     user_id = current_user.get("id", current_user.get("sub"))
-    return {topic_id: state.model_dump() for topic_id, state in get_skill_vector(user_id).items()}
+    return get_skill_vector(user_id)
 
 
 @app.post("/attempts", response_model=AttemptResponse)

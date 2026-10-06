@@ -18,10 +18,20 @@ class InMemoryCodingRepository:
 
     def choose(self, user_id: str, weak_topic_ids: list[str]) -> dict[str, Any]:
         assigned = {item["problem_id"] for item in self.assignments.get(user_id, [])}
-        problem = next((item for item in self.problems if item["id"] not in assigned and (not weak_topic_ids or item["topic_id"] in weak_topic_ids)), None) or next(item for item in self.problems if item["id"] not in assigned)
+        problem = next((item for item in self.problems if item["id"] not in assigned and (not weak_topic_ids or item["topic_id"] in weak_topic_ids)), None) or next((item for item in self.problems if item["id"] not in assigned), None)
+        if not problem and self.problems:
+            problem = self.problems[0]
         assignment = {"id": str(uuid4()), "user_id": user_id, "problem_id": problem["id"], "assigned_at": datetime.now(timezone.utc).isoformat(), "status": "pending", "verified_at": None, "problem": problem}
         self.assignments.setdefault(user_id, []).append(assignment)
         return assignment
+
+    def suggest_problems(self, topic_ids: list[str], limit: int = 3) -> list[dict[str, Any]]:
+        """Return up to *limit* problems for the given topic_ids without creating assignments."""
+        if topic_ids:
+            matched = [p for p in self.problems if p["topic_id"] in topic_ids]
+        else:
+            matched = list(self.problems)
+        return matched[:limit]
 
     def list_for_user(self, user_id: str) -> list[dict[str, Any]]:
         return list(self.assignments.get(user_id, []))
@@ -52,10 +62,24 @@ class SupabaseCodingRepository:
         used = {row["problem_id"] for row in assigned}
         problem = next((row for row in problems if row["id"] not in used), None)
         if not problem:
-            raise ValueError("No unassigned coding problems are available")
+            if problems:
+                problem = problems[0]
+            else:
+                raise ValueError("No unassigned coding problems are available")
         row = {"user_id": user_id, "problem_id": problem["id"], "status": "pending"}
         saved = retry_supabase(lambda: self.client.table("coding_assignments").insert(row).execute()).data[0]
         return {**saved, "problem": problem}
+
+    def suggest_problems(self, topic_ids: list[str], limit: int = 3) -> list[dict[str, Any]]:
+        """Return up to *limit* problems for the given topic_ids without creating assignments."""
+        query = self.client.table("coding_problems").select("*")
+        if topic_ids:
+            query = query.in_("topic_id", topic_ids)
+        rows = retry_supabase(lambda: query.limit(limit).execute()).data
+        if not rows and topic_ids:
+            # fall back to any problems if none match the specific topics
+            rows = retry_supabase(lambda: self.client.table("coding_problems").select("*").limit(limit).execute()).data
+        return rows[:limit]
 
     def list_for_user(self, user_id: str) -> list[dict[str, Any]]:
         rows = retry_supabase(lambda: self.client.table("coding_assignments").select("*,coding_problems(*)").eq("user_id", user_id).order("assigned_at", desc=True).execute()).data
