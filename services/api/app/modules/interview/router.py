@@ -71,7 +71,10 @@ class InterviewStore:
             "completed_at": None,
         }
         if self.supabase:
-            self.supabase.table("interview_sessions").insert(session).execute()
+            try:
+                self.supabase.table("interview_sessions").insert(session).execute()
+            except Exception:
+                pass  # Gracefully degrade to in-memory only
 
         self.sessions[session_id] = session
         self.turns[session_id] = []
@@ -85,20 +88,23 @@ class InterviewStore:
         if local:
             return local
         if self.supabase:
-            rows = (
-                self.supabase.table("interview_sessions")
-                .select("*")
-                .eq("user_id", user_id)
-                .eq("status", "in_progress")
-                .limit(1)
-                .execute()
-                .data
-            )
-            if rows:
-                session = rows[0]
-                self.sessions[session["id"]] = session
-                self.turns.setdefault(session["id"], [])
-                return session
+            try:
+                rows = (
+                    self.supabase.table("interview_sessions")
+                    .select("*")
+                    .eq("user_id", user_id)
+                    .eq("status", "in_progress")
+                    .limit(1)
+                    .execute()
+                    .data
+                )
+                if rows:
+                    session = rows[0]
+                    self.sessions[session["id"]] = session
+                    self.turns.setdefault(session["id"], [])
+                    return session
+            except Exception:
+                pass  # Supabase unavailable or table missing — use in-memory only
         return None
 
     def get(self, session_id: str, user_id: str) -> dict[str, Any]:
@@ -106,48 +112,60 @@ class InterviewStore:
         if session and session["user_id"] == user_id:
             return session
         if self.supabase:
-            rows = (
-                self.supabase.table("interview_sessions")
-                .select("*")
-                .eq("id", session_id)
-                .eq("user_id", user_id)
-                .limit(1)
-                .execute()
-                .data
-            )
-            if rows:
-                session = rows[0]
-                self.sessions[session_id] = session
-                self.turns.setdefault(session_id, [])
-                return session
+            try:
+                rows = (
+                    self.supabase.table("interview_sessions")
+                    .select("*")
+                    .eq("id", session_id)
+                    .eq("user_id", user_id)
+                    .limit(1)
+                    .execute()
+                    .data
+                )
+                if rows:
+                    session = rows[0]
+                    self.sessions[session_id] = session
+                    self.turns.setdefault(session_id, [])
+                    return session
+            except Exception:
+                pass  # Supabase unavailable or table missing — use in-memory only
         raise HTTPException(status_code=404, detail="Interview session not found")
 
     def get_turns(self, session_id: str) -> list[dict[str, Any]]:
         if session_id in self.turns:
             return self.turns[session_id]
         if self.supabase:
-            rows = (
-                self.supabase.table("interview_turns")
-                .select("*")
-                .eq("session_id", session_id)
-                .order("turn_number")
-                .execute()
-                .data
-            )
-            self.turns[session_id] = rows
-            return rows
+            try:
+                rows = (
+                    self.supabase.table("interview_turns")
+                    .select("*")
+                    .eq("session_id", session_id)
+                    .order("turn_number")
+                    .execute()
+                    .data
+                )
+                self.turns[session_id] = rows
+                return rows
+            except Exception:
+                pass  # Supabase unavailable or table missing — use in-memory only
         return []
 
     def record_turn(self, session_id: str, turn: dict[str, Any]) -> None:
         self.turns.setdefault(session_id, []).append(turn)
         if self.supabase:
-            self.supabase.table("interview_turns").insert(turn).execute()
+            try:
+                self.supabase.table("interview_turns").insert(turn).execute()
+            except Exception:
+                pass  # Gracefully degrade to in-memory only
 
     def update_session(self, session_id: str, updates: dict[str, Any]) -> None:
         if session_id in self.sessions:
             self.sessions[session_id].update(updates)
         if self.supabase:
-            self.supabase.table("interview_sessions").update(updates).eq("id", session_id).execute()
+            try:
+                self.supabase.table("interview_sessions").update(updates).eq("id", session_id).execute()
+            except Exception:
+                pass  # Gracefully degrade to in-memory only
 
 
 STORE = InterviewStore()

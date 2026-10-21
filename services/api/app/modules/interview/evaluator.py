@@ -193,27 +193,6 @@ class InterviewRubricEvaluator:
                 "strengths": ["Clear narrative flow" if star_count >= 2 else "Relevant situational context"],
                 "improvements": ["Structure explicitly using STAR (Situation, Task, Action, Result) with measurable metrics."],
             }
-            star_score = sum(star_signals.values()) / 3.0
-            base_star = min(9.5, max(3.5, 3.0 + (star_score * 5.0) + (coverage_ratio * 2.0)))
-
-            has_ownership = bool(re.search(r"\bi\b|my responsibility|i took|i realized", text))
-            base_owner = min(9.5, 5.0 + (2.5 if has_ownership else 0.5) + (coverage_ratio * 2.0))
-
-            base_comm = 8.0 if (40 <= word_count <= 250) else 6.0
-            overall = (base_star * 0.40 + base_owner * 0.35 + base_comm * 0.25) * 10
-
-            feedback = "Clear behavioral explanation. Focus on quantifying measurable results (e.g. % improvements, team velocity) for stronger impact."
-            return {
-                "scores": RubricScores(
-                    accuracy=round(base_star, 1),
-                    structure=round(base_owner, 1),
-                    communication=round(base_comm, 1),
-                    overall=round(overall, 1),
-                ),
-                "feedback": feedback,
-                "strengths": ["Good narrative flow and personal accountability."],
-                "improvements": ["Quantify project impact with specific metrics or KPIs where possible."],
-            }
 
     @classmethod
     def _evaluate_gemini(

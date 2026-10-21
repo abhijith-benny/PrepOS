@@ -74,7 +74,10 @@ class SessionStore:
             "config": config, "result": None, "answers": [],
         }
         if self.supabase:
-            self.supabase.table("diagnostic_sessions").insert({key: value for key, value in session.items() if key != "answers"}).execute()
+            try:
+                self.supabase.table("diagnostic_sessions").insert({key: value for key, value in session.items() if key != "answers"}).execute()
+            except Exception:
+                pass
         self.sessions[session["id"]] = session
         return session
 
@@ -83,11 +86,14 @@ class SessionStore:
         if local:
             return local
         if self.supabase:
-            rows = self.supabase.table("diagnostic_sessions").select("*").eq("user_id", user_id).eq("status", "in_progress").limit(1).execute().data
-            if rows:
-                rows[0]["answers"] = []
-                self.sessions[rows[0]["id"]] = rows[0]
-                return rows[0]
+            try:
+                rows = self.supabase.table("diagnostic_sessions").select("*").eq("user_id", user_id).eq("status", "in_progress").limit(1).execute().data
+                if rows:
+                    rows[0]["answers"] = []
+                    self.sessions[rows[0]["id"]] = rows[0]
+                    return rows[0]
+            except Exception:
+                pass
         return None
 
     def get(self, session_id: str, user_id: str) -> dict[str, Any]:
@@ -95,17 +101,23 @@ class SessionStore:
         if session and session["user_id"] == user_id:
             return session
         if self.supabase:
-            rows = self.supabase.table("diagnostic_sessions").select("*").eq("id", session_id).eq("user_id", user_id).limit(1).execute().data
-            if rows:
-                rows[0]["answers"] = []
-                self.sessions[session_id] = rows[0]
-                return rows[0]
+            try:
+                rows = self.supabase.table("diagnostic_sessions").select("*").eq("id", session_id).eq("user_id", user_id).limit(1).execute().data
+                if rows:
+                    rows[0]["answers"] = []
+                    self.sessions[session_id] = rows[0]
+                    return rows[0]
+            except Exception:
+                pass
         raise HTTPException(status_code=404, detail="Diagnostic session not found")
 
     def save(self, session: dict[str, Any]) -> None:
         self.sessions[session["id"]] = session
         if self.supabase:
-            self.supabase.table("diagnostic_sessions").update({key: session[key] for key in ("status", "completed_at", "result")}).eq("id", session["id"]).eq("user_id", session["user_id"]).execute()
+            try:
+                self.supabase.table("diagnostic_sessions").update({key: session[key] for key in ("status", "completed_at", "result")}).eq("id", session["id"]).eq("user_id", session["user_id"]).execute()
+            except Exception:
+                pass
 
 
 STORE = SessionStore()
@@ -177,7 +189,10 @@ def complete_session(session_id: str, current_user: dict[str, Any] = Depends(get
     session.update({"status": "completed", "completed_at": datetime.now(timezone.utc).isoformat(), "result": result})
     STORE.save(session)
     if STORE.supabase:
-        STORE.supabase.table("cluster_assignments").insert({"user_id": session["user_id"], "session_id": session_id, **assignment}).execute()
+        try:
+            STORE.supabase.table("cluster_assignments").insert({"user_id": session["user_id"], "session_id": session_id, **assignment}).execute()
+        except Exception:
+            pass
     EVENT_BUS.emit(DiagnosticCompleted(user_id=session["user_id"], payload=result))
     return result
 

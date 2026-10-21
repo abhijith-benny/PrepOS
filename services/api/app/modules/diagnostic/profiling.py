@@ -81,8 +81,13 @@ def load_profile_model(path: Path = MODEL_PATH) -> dict[str, Any]:
 
 
 def assign_profile(vector: list[float], profile: dict[str, Any]) -> dict[str, Any]:
-    values = np.asarray(vector, dtype=float).reshape(1, -1)
     model = profile["model"]
+    expected_n = getattr(model, "n_features_in_", 25)
+    if len(vector) > expected_n:
+        vector = vector[:expected_n]
+    elif len(vector) < expected_n:
+        vector = list(vector) + [0.5] * (expected_n - len(vector))
+    values = np.asarray(vector, dtype=float).reshape(1, -1)
     if profile["algorithm"] == "kmeans":
         cluster_id = int(model.predict(values)[0])
         distances = model.transform(values)[0]
