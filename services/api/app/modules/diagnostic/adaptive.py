@@ -26,6 +26,55 @@ class TopicPosterior:
         self.answers += 1
 
 
+def evaluate_answer(question: dict[str, Any], answer: Any) -> bool:
+    """Accurately mark user answer against question options, answer string, or index."""
+    if answer is None or str(answer).strip().lower() in ("unanswered", "skipped", "none", ""):
+        return False
+
+    sub_str = str(answer).strip()
+    correct_str = str(question.get("answer", "")).strip()
+    options = [str(o).strip() for o in (question.get("options") or [])]
+
+    # 1. Direct text match (case-insensitive)
+    if sub_str.lower() == correct_str.lower():
+        return True
+
+    # 2. User submitted an option letter: 'A', 'B', 'C', 'D'
+    if len(sub_str) == 1 and sub_str.upper() in ("A", "B", "C", "D"):
+        sub_idx = ord(sub_str.upper()) - ord("A")
+        if 0 <= sub_idx < len(options):
+            if options[sub_idx].lower() == correct_str.lower():
+                return True
+            if question.get("answer_index") is not None and int(question["answer_index"]) == sub_idx:
+                return True
+
+    # 3. Question's answer is an option letter: 'A', 'B', 'C', 'D'
+    if len(correct_str) == 1 and correct_str.upper() in ("A", "B", "C", "D"):
+        correct_idx = ord(correct_str.upper()) - ord("A")
+        if 0 <= correct_idx < len(options):
+            if sub_str.lower() == options[correct_idx].lower():
+                return True
+
+    # 4. User submitted index as digit: '0', '1', '2', '3'
+    if sub_str.isdigit():
+        sub_idx = int(sub_str)
+        if 0 <= sub_idx < len(options):
+            if options[sub_idx].lower() == correct_str.lower():
+                return True
+            if question.get("answer_index") is not None and int(question["answer_index"]) == sub_idx:
+                return True
+
+    # 5. Check if user's option text matches an option, and compare index with answer_index
+    for idx, opt in enumerate(options):
+        if opt.lower() == sub_str.lower():
+            if question.get("answer_index") is not None and int(question["answer_index"]) == idx:
+                return True
+            if correct_str.isdigit() and int(correct_str) == idx:
+                return True
+
+    return False
+
+
 @dataclass
 class AdaptiveDiagnostic:
     questions: list[dict[str, Any]]
@@ -101,7 +150,7 @@ class AdaptiveDiagnostic:
         )
 
     def answer(self, question: dict[str, Any], answer: Any) -> bool:
-        correct = str(answer).strip().lower() == str(question["answer"]).strip().lower()
+        correct = evaluate_answer(question, answer)
         self.answered_ids.add(question["id"])
         self.posteriors[question["topic_id"]].update(correct)
         return correct

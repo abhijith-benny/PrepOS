@@ -401,4 +401,266 @@ def test_report_shows_overall_score_percentage_and_detailed_answers() -> None:
         assert apt_sec["answers"][0]["time_taken_s"] == 12.0
     finally:
         app.dependency_overrides.clear()
+
+
+# ---------------------------------------------------------------------------
+# Part 2: AI-Generated Question Staging & Self-Check Tests
+# ---------------------------------------------------------------------------
+
+def test_malformed_llm_json_triggers_retry_then_skip() -> None:
+    import json
+    from app.modules.diagnostic.question_generation import GroqClient
+
+    client = GroqClient(api_key="fake-key")
+    attempts = []
+
+    def fake_llm(messages):
+        attempts.append(messages)
+        if len(attempts) == 1:
+            # First attempt: completely malformed text
+            return "This is not valid json at all {"
+        else:
+            # Second attempt (retry): 1 valid question and 1 malformed item
+            return json.dumps([
+                {
+                    "question": "What is the capital of France?",
+                    "options": ["Paris", "Rome", "Berlin", "Madrid"],
+                    "answer_index": 0,
+                    "explanation": "Paris is the capital of France.",
+                },
+                {
+                    "bad_key": "missing required options and question body"
+                },
+            ])
+
+    # Should retry once, accept the valid question, skip the bad one, and not crash
+    raw_questions = client.generate_raw_batch("General", "Easy", 2, llm_caller=fake_llm)
+    assert len(attempts) == 2, "Must retry once on malformed response"
+    assert len(raw_questions) == 1
+    assert raw_questions[0]["body"] == "What is the capital of France?"
+    assert raw_questions[0]["answer_index"] == 0
+
+
+def test_mismatched_self_check_discarded_and_never_reaches_pending() -> None:
+    import json
+    from app.modules.diagnostic.question_generation import GroqClient, PendingQuestionsStore
+
+    client = GroqClient(api_key="fake-key")
+    store = PendingQuestionsStore()
+
+    # Generator returns 2 questions
+    def fake_generator(messages):
+        return json.dumps([
+            {
+                "question": "Question 1: What is 2 + 2?",
+                "options": ["3", "4", "5", "6"],
+                "answer_index": 1,  # Option 1 is "4"
+                "explanation": "2 + 2 = 4",
+            },
+            {
+                "question": "Question 2: What is 3 * 3?",
+                "options": ["6", "7", "8", "9"],
+                "answer_index": 3,  # Option 3 is "9"
+                "explanation": "3 * 3 = 9",
+            },
+        ])
+
+    call_count = 0
+
+    def fake_self_checker(messages):
+        nonlocal call_count
+        call_count += 1
+        prompt_content = messages[-1]["content"]
+        if "Question 1" in prompt_content:
+            # Matches answer_index 1
+            return json.dumps({"reasoning": "2 + 2 is definitely 4", "derived_answer_index": 1})
+        else:
+            # Mismatch! Says derived is 0 instead of 3
+            return json.dumps({"reasoning": "I mistakenly think 3 * 3 is 6", "derived_answer_index": 0})
+
+    surviving = client.generate_and_verify(
+        category="Math",
+        difficulty="Easy",
+        count=2,
+        llm_caller=fake_generator,
+        self_check_caller=fake_self_checker,
+    )
+
+    # Question 2 must be discarded because derived 0 != stated 3!
+    assert len(surviving) == 1
+    assert surviving[0]["body"] == "Question 1: What is 2 + 2?"
+    assert surviving[0]["model_check_passed"] is True
+
+    # Store surviving in pending table
+    for q in surviving:
+        store.add_pending(q)
+
+    pending_list = store.list_pending()
+    assert len(pending_list) == 1
+    assert pending_list[0]["body"] == "Question 1: What is 2 + 2?"
+
+
+def test_approve_moves_question_to_live_questions_table() -> None:
+    from app.modules.diagnostic.question_generation import PendingQuestionsStore
+
+    store = PendingQuestionsStore()
+    pending_item = store.add_pending({
+        "category": "Data Structures",
+        "difficulty": "Medium",
+        "body": "What is the time complexity of QuickSort average case?",
+        "options": ["O(N)", "O(N log N)", "O(N^2)", "O(1)"],
+        "answer_index": 1,
+        "explanation": "Average case of QuickSort is O(N log N).",
+        "model_check_passed": True,
+    })
+
+    assert len(store.list_pending()) == 1
+    assert len(store.local_questions) == 0
+
+    # Approve question
+    approved = store.approve_question(pending_item["id"])
+    assert approved["approved_question"]["body"] == pending_item["body"]
+    assert approved["approved_question"]["answer"] == "O(N log N)"
+    assert approved["approved_question"]["difficulty"] == 2
+    assert approved["approved_question"]["type"] == "mcq"
+
+    # Confirms it is moved to live questions and marked reviewed in pending
+    assert len(store.local_questions) == 1
+    assert len(store.list_pending()) == 0  # No longer in unreviewed pending list
+
+
+def test_reject_discards_question() -> None:
+    from app.modules.diagnostic.question_generation import PendingQuestionsStore
+
+    store = PendingQuestionsStore()
+    pending_item = store.add_pending({
+        "category": "Algorithms",
+        "difficulty": "Hard",
+        "body": "Is P equal to NP?",
+        "options": ["Yes", "No", "Unknown", "Sometimes"],
+        "answer_index": 2,
+        "explanation": "Currently an open problem in computer science.",
+        "model_check_passed": True,
+    })
+
+    assert len(store.list_pending()) == 1
+
+    # Reject question
+    rejected = store.reject_question(pending_item["id"])
+    assert rejected["status"] == "rejected"
+    assert rejected["rejected_id"] == pending_item["id"]
+
+    # Confirms it is removed from active pending list
+    assert len(store.list_pending()) == 0
+
+
+def test_admin_endpoints_auth_and_rate_limits() -> None:
+    from app.core.config import settings
+
+    client = TestClient(app)
+
+    # 1. Unauthenticated requests to admin endpoints are rejected with 403
+    r_unauth = client.get("/diagnostic/admin/pending-questions")
+    assert r_unauth.status_code == 403
+    assert "Admin access required" in r_unauth.json()["detail"]
+
+    # 2. Authenticated with X-Admin-Secret header succeeds
+    headers = {"X-Admin-Secret": settings.admin_secret}
+    r_auth = client.get("/diagnostic/admin/pending-questions", headers=headers)
+    assert r_auth.status_code == 200
+    assert isinstance(r_auth.json(), list)
+
+    # 3. Requesting > 20 questions is rejected with 400
+    r_too_many = client.post(
+        "/diagnostic/admin/generate-questions",
+        headers=headers,
+        json={"category": "DSA", "difficulty": "Easy", "count": 25},
+    )
+    assert r_too_many.status_code == 400
+    assert "Maximum 20" in r_too_many.json()["detail"]
+
+
+def test_real_marking_and_question_quality() -> None:
+    """Verify that real questions have legitimate options and evaluate_answer
+    scores submitted answers with real marking (+1.0 mark)."""
+    from app.modules.diagnostic.adaptive import evaluate_answer
+    from app.modules.diagnostic import router as dr
+
+    # 1. Verify evaluate_answer logic
+    q = {
+        "body": "What is the remainder when 7^2021 is divided by 100?",
+        "options": ["7", "1", "43", "49"],
+        "answer": "7",
+        "answer_index": 0,
+        "explanation": "7^4 = 2401 = 1 mod 100",
+    }
+
+    # Matches text
+    assert evaluate_answer(q, "7") is True
+    # Matches letter A (index 0)
+    assert evaluate_answer(q, "A") is True
+    assert evaluate_answer(q, "a") is True
+    # Matches digit index 0
+    assert evaluate_answer(q, "0") is True
+    # Incorrect option text or letter
+    assert evaluate_answer(q, "43") is False
+    assert evaluate_answer(q, "B") is False
+    assert evaluate_answer(q, "C") is False
+    # Skipped / unanswered
+    assert evaluate_answer(q, "skipped") is False
+    assert evaluate_answer(q, "") is False
+
+    # 2. Verify all questions in dr.STORE._questions() are real (no dummy placeholder options)
+    questions = dr.STORE._questions()
+    assert len(questions) > 0
+    for item in questions:
+        opts = [str(o) for o in item.get("options", [])]
+        assert not any("The first option" in o for o in opts), f"Dummy question found: {item}"
+        assert "Variant " not in item.get("body", "")
+        assert "best answer to this reasoning problem" not in item.get("body", "")
+
+    # 3. Verify complete diagnostic session flow records marks and real marking reports
+    app.dependency_overrides[get_current_user] = lambda: {"id": "marking-tester", "email": "marking@example.com"}
+    try:
+        client = TestClient(app)
+        start_res = client.post("/diagnostic/sessions")
+        assert start_res.status_code == 201
+        sid = start_res.json()["id"]
+
+        session = dr.STORE.sessions[sid]
+        for sec in session["sections"].values():
+            sec["question_limit"] = 1
+
+        for cat in ("aptitude", "CS core", "English", "DSA"):
+            next_q = client.get(f"/diagnostic/sessions/{sid}/next").json()["question"]
+            assert next_q is not None
+            ans_payload = "verified" if cat == "DSA" else (next_q.get("options", ["A"])[0] if next_q.get("options") else "A")
+            ans_res = client.post(
+                f"/diagnostic/sessions/{sid}/answer",
+                json={"question_id": next_q["id"], "answer": ans_payload, "time_taken_s": 5},
+            )
+            assert ans_res.status_code == 200
+            assert "marks" in ans_res.json()
+            assert ans_res.json()["marks"] == 1
+
+        complete_res = client.post(f"/diagnostic/sessions/{sid}/complete")
+        assert complete_res.status_code == 200
+        report_data = complete_res.json()
+
+        assert "marks_obtained" in report_data
+        assert "total_marks" in report_data
+        assert report_data["marks_obtained"] >= 1
+        assert report_data["total_marks"] == 4
+
+        # Verify section detailed answers have marks, user_answer, and explanation
+        for sec_rep in report_data["sections"]:
+            assert "marks_obtained" in sec_rep
+            assert "total_marks" in sec_rep
+            for ans_item in sec_rep.get("answers", []):
+                assert "marks" in ans_item
+                assert "user_answer" in ans_item
+                assert "correct_answer" in ans_item
+    finally:
+        app.dependency_overrides.clear()
+
 

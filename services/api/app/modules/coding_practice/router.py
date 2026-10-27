@@ -39,28 +39,68 @@ def assign_problem(current_user: dict[str, Any] = Depends(get_current_user)) -> 
     if not catalog_problems:
         raise HTTPException(status_code=422, detail="No unassigned coding problems are available")
 
-    # Filter out already assigned problems if possible, so user gets fresh problems
+    # Exclude any coding_problems.id that already has a row in coding_assignments for this user_id,
+    # REGARDLESS of status (pending, verified, failed_to_verify, etc.)
     already_assigned = {a["problem_id"] for a in coding_repository.list_for_user(user_id)}
     unassigned = [p for p in catalog_problems if p["id"] not in already_assigned]
-    candidates = unassigned if len(unassigned) >= 3 else catalog_problems
+    if not unassigned:
+        raise HTTPException(status_code=422, detail="No unassigned coding problems are available")
+
+    user_message = None
+    if weak_topics:
+        # User's top weak area
+        top_weak_topics = [weak_topics[0]]
+        eligible_weak = [p for p in unassigned if p.get("topic_id") in top_weak_topics]
+        if eligible_weak:
+            candidates = eligible_weak
+            focus_topics = top_weak_topics
+        else:
+            # ALL eligible problems for the user's top weak areas have already been assigned.
+            # Don't error — fall back to the next-weakest topic's problems rather than returning nothing,
+            # and tell the user explicitly.
+            fallback_candidates = []
+            focus_topics = []
+            for next_topic in weak_topics[1:]:
+                matching = [p for p in unassigned if p.get("topic_id") == next_topic]
+                if matching:
+                    fallback_candidates = matching
+                    focus_topics = [next_topic]
+                    break
+            if not fallback_candidates:
+                fallback_candidates = unassigned
+
+            candidates = fallback_candidates
+            user_message = "You've been assigned all available problems for your top weak areas — showing problems for your next focus area"
+    else:
+        candidates = unassigned
+        focus_topics = []
 
     selected_problems, rationale = select_coding_problems(
-        weak_topics=weak_topics,
+        weak_topics=focus_topics if focus_topics else weak_topics,
         problems=candidates,
         difficulty_preference=target_diff,
-        limit=3,
+        limit=1,
     )
+
+    if not selected_problems:
+        selected_problems = [candidates[0]]
+        rationale = rationale or "Targeted coding practice."
 
     assigned_records = []
     for prob in selected_problems:
         assigned = coding_repository.assign_problem(user_id, prob["id"], rationale=rationale)
         assigned_records.append(assigned)
 
-    if not assigned_records:
-        assigned_records.append(coding_repository.choose(user_id, weak_topics, rationale=rationale))
-
     primary = assigned_records[0]
-    return {**primary, "assigned": assigned_records, "rationale": rationale}
+    result = {
+        **primary,
+        "assigned": assigned_records,
+        "rationale": rationale,
+    }
+    if user_message:
+        result["user_message"] = user_message
+        result["message"] = user_message
+    return result
 
 
 

@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.deps import get_current_user
 from app.shared.events import AttemptRecorded
 from app.shared.learner_model import EVENT_BUS, apply_evidence, get_skill_vector
-from app.shared.repositories import attempt_repository, profile_repository
+from app.shared.repositories import attempt_repository, profile_repository, topic_repository
 from app.shared.schemas import (
     AttemptCreate,
     AttemptResponse,
@@ -76,7 +76,7 @@ def update_me(
 
 @app.get("/topics")
 def list_topics() -> list[TopicRead]:
-    return []
+    return [TopicRead(**t) for t in topic_repository.list_topics()]
 
 
 @app.get("/skills/me", response_model=dict[str, SkillState])

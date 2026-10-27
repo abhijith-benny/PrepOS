@@ -145,7 +145,7 @@ function Profile({ profile, loading, error, onSaved }) {
   return <div className="profile-page"><div className="page-heading"><div><div className="eyebrow">Student profile</div><h2>Your context, in one place.</h2><p>Keep the details behind your study plan and diagnostic up to date.</p></div>{profile?.department && !editing && <button onClick={() => setEditing(true)}>Edit profile</button>}</div>{editing ? <OnboardingForm profile={profile} mode="profile" onSaved={(saved) => { setEditing(false); onSaved(saved) }} /> : <div className="profile-summary"><div className="profile-summary-head"><div><span className="stat-label">Department</span><strong>{profile.department}</strong></div><div><span className="stat-label">Target role</span><strong>{profile.target_role || 'Not set'}</strong></div></div><div className="profile-detail-grid"><div><span className="stat-label">Target date</span><strong>{profile.target_date || 'Not set'}</strong></div><div><span className="stat-label">Weekly hours</span><strong>{profile.weekly_hours || 'Not set'}</strong></div><div><span className="stat-label">Year / semester</span><strong>{profile.year_or_semester || 'Not set'}</strong></div><div><span className="stat-label">Known languages</span><strong>{profile.known_languages?.join(', ') || 'Not set'}</strong></div><div><span className="stat-label">LeetCode username</span><strong>{profile.leetcode_username || 'Not set'}</strong></div></div></div>}</div>
 }
 
-function Dashboard({ profile }) {
+function Dashboard({ profile, topicMap = {} }) {
   const { session } = useAuthStore()
   const [skills, setSkills] = useState({})
   const [loading, setLoading] = useState(true)
@@ -159,10 +159,10 @@ function Dashboard({ profile }) {
   }, [session])
 
   const skillEntries = Object.entries(skills)
-  return <div className="dashboard-page"><div className="page-heading"><div><div className="eyebrow">Overview</div><h2>Good to see you.</h2><p>Your learning signal at a glance. Keep the next useful step close.</p></div></div><div className={`mock-test-card ${profile?.department ? 'unlocked' : 'locked'}`}><div><div className="eyebrow">Primary next step</div><h3>Start Mock Test</h3><p>{profile?.department ? 'Take the four-section placement test to calibrate your learning path.' : 'Complete your profile to unlock the mock test'}</p></div><a className={`mock-test-action ${!profile?.department ? 'disabled' : ''}`} href={profile?.department ? '/diagnostic' : undefined} aria-disabled={!profile?.department}>Start test <span aria-hidden="true">→</span></a></div>{loading ? <div className="dashboard-grid"><div className="card"><div className="skeleton" /><div className="skeleton" /><div className="skeleton short" /></div></div> : <><div className="dashboard-grid"><div className="card stat-card"><span className="stat-label">Topics tracked</span><strong>{skillEntries.length}</strong><span className="stat-note">Across your learner model</span></div><div className="card stat-card"><span className="stat-label">Average mastery</span><strong>{skillEntries.length ? `${Math.round(skillEntries.reduce((sum, [, value]) => sum + value.mastery, 0) / skillEntries.length * 100)}%` : '—'}</strong><span className="stat-note">Built from recent evidence</span></div><div className="card stat-card accent-card"><span className="stat-label">Next move</span><strong>Planner</strong><span className="stat-note">Turn weak topics into study blocks</span></div></div><div className="card skill-overview"><div className="section-heading"><div><h3>Skill overview</h3><p>Mastery across the topics you have touched.</p></div><a href="/planner">Open planner →</a></div>{skillEntries.length ? <div className="mastery-list">{skillEntries.map(([topic, value]) => <div className="mastery-row" key={topic}><span>{topic}</span><div className="bar"><i style={{ width: `${value.mastery * 100}%` }} /></div><strong>{Math.round(value.mastery * 100)}%</strong></div>)}</div> : <div className="empty-inline">Complete the diagnostic to start building your skill vector.</div>}</div></>}</div>
+  return <div className="dashboard-page"><div className="page-heading"><div><div className="eyebrow">Overview</div><h2>Good to see you.</h2><p>Your learning signal at a glance. Keep the next useful step close.</p></div></div><div className={`mock-test-card ${profile?.department ? 'unlocked' : 'locked'}`}><div><div className="eyebrow">Primary next step</div><h3>Start Mock Test</h3><p>{profile?.department ? 'Take the four-section placement test to calibrate your learning path.' : 'Complete your profile to unlock the mock test'}</p></div><a className={`mock-test-action ${!profile?.department ? 'disabled' : ''}`} href={profile?.department ? '/diagnostic' : undefined} aria-disabled={!profile?.department}>Start test <span aria-hidden="true">→</span></a></div>{loading ? <div className="dashboard-grid"><div className="card"><div className="skeleton" /><div className="skeleton" /><div className="skeleton short" /></div></div> : <><div className="dashboard-grid"><div className="card stat-card"><span className="stat-label">Topics tracked</span><strong>{skillEntries.length}</strong><span className="stat-note">Across your learner model</span></div><div className="card stat-card"><span className="stat-label">Average mastery</span><strong>{skillEntries.length ? `${Math.round(skillEntries.reduce((sum, [, value]) => sum + value.mastery, 0) / skillEntries.length * 100)}%` : '—'}</strong><span className="stat-note">Built from recent evidence</span></div><div className="card stat-card accent-card"><span className="stat-label">Next move</span><strong>Planner</strong><span className="stat-note">Turn weak topics into study blocks</span></div></div><div className="card skill-overview"><div className="section-heading"><div><h3>Skill overview</h3><p>Mastery across the topics you have touched.</p></div><a href="/planner">Open planner →</a></div>{skillEntries.length ? <div className="mastery-list">{skillEntries.map(([topic, value]) => <div className="mastery-row" key={topic}><span>{topicMap[topic] || topic}</span><div className="bar"><i style={{ width: `${value.mastery * 100}%` }} /></div><strong>{Math.round(value.mastery * 100)}%</strong></div>)}</div> : <div className="empty-inline">Complete the diagnostic to start building your skill vector.</div>}</div></>}</div>
 }
 
-function Diagnostic({ profile }) {
+function Diagnostic({ profile, topicMap = {} }) {
   const { session } = useAuthStore()
   const [sessionId, setSessionId] = useState(null)
   const [question, setQuestion] = useState(null)
@@ -386,34 +386,37 @@ function Diagnostic({ profile }) {
       : Math.round(((report.total_correct || 0) / Math.max(1, report.total_questions || 1)) * 100)
     const totalCorrect = report.total_correct ?? (report.sections || []).reduce((acc, s) => acc + (s.correct_count || 0), 0)
     const totalQuestions = report.total_questions ?? (report.sections || []).reduce((acc, s) => acc + (s.question_count || 0), 0)
+    const totalMarks = report.total_marks ?? totalQuestions
+    const marksObtained = report.marks_obtained ?? totalCorrect
 
     return (
       <section className="diagnostic-panel report-panel">
         <div className="eyebrow">Diagnostic complete</div>
 
-        {/* Prominent Overall Score Summary Banner */}
+        {/* Prominent Overall Score Summary Banner with Real Marking */}
         <div className="overall-score-hero">
-          <div className="overall-score-tag">Mock Test Overall Mark</div>
+          <div className="overall-score-tag">Diagnostic Mock Test Marking</div>
           <div className="overall-score-main">
             <div className="overall-score-circle">
-              <span className="score-number">{overallPct}%</span>
-              <span className="score-desc">Overall Mark</span>
+              <span className="score-number">{marksObtained}/{totalMarks}</span>
+              <span className="score-desc">Total Marks</span>
             </div>
             <div className="overall-score-meta">
-              <h3>Diagnostic Calibration Complete</h3>
+              <h3>Diagnostic Calibration & Real Marking Complete</h3>
               <p>
-                Overall Score: <strong>{totalCorrect}</strong> / <strong>{totalQuestions}</strong> questions correct across all sections ({overallPct}%).
+                Final Score: <strong>{marksObtained}</strong> / <strong>{totalMarks}</strong> Marks ({overallPct}%) across all sections.
               </p>
               <div className="score-badges">
                 <span className="badge-item">🎯 Profile: {report.cluster_label || 'Assigned'}</span>
                 <span className="badge-item">📈 Calibration: {Math.round((report.confidence || 0.8) * 100)}% confidence</span>
+                <span className="badge-item">⚖️ Marking: +1.0 Mark / Question</span>
               </div>
             </div>
           </div>
         </div>
 
         <div className="report-heading">
-          <div><h2>{report.cluster_label}</h2><p>Your first profile is ready. Use it as a starting point, not a ceiling.</p></div>
+          <div><h2>{report.cluster_label}</h2><p>Your placement diagnostic was calibrated with real questions. Review your performance and question breakdown below.</p></div>
           <div className="confidence-ring"><strong>{Math.round(report.confidence * 100)}%</strong><span>confidence</span></div>
         </div>
         <div className="section-report-list">
@@ -425,7 +428,7 @@ function Diagnostic({ profile }) {
                   <span>{section.description}</span>
                 </div>
                 <div className="section-stats-summary">
-                  <b>{section.correct_count}/{section.question_limit} correct</b>
+                  <b>{section.marks_obtained ?? section.correct_count}/{section.total_marks ?? section.question_limit} Marks ({Math.round(section.score * 100)}%)</b>
                   {section.time_taken_s !== undefined && (
                     <span className="section-total-time">⏱️ Total: {Math.round(section.time_taken_s)}s</span>
                   )}
@@ -434,25 +437,73 @@ function Diagnostic({ profile }) {
               <div className="section-score"><i style={{ width: `${section.score * 100}%` }} /></div>
               <small>Strong: {section.strong_topics?.join(', ') || 'Building signal'} · Focus: {section.weak_topics?.join(', ') || 'Building signal'}</small>
 
-              {/* Question-level breakdown showing correct, time taken, and timeout flag */}
+              {/* Question-level breakdown showing real question review, selected answer, correct answer, and explanation */}
               {section.answers && section.answers.length > 0 && (
                 <div className="section-breakdown-box">
-                  <div className="breakdown-headline">Question Breakdown</div>
+                  <div className="breakdown-headline">Question Review & Real Marking</div>
                   <div className="breakdown-rows">
                     {section.answers.map((ans, idx) => (
-                      <div key={ans.question_id || idx} className={`breakdown-item ${ans.correct ? 'is-correct' : 'is-incorrect'}`}>
-                        <div className="breakdown-q-info">
-                          <span className="breakdown-q-index">Q{idx + 1}</span>
-                          <span className="breakdown-q-title">{ans.title || ans.question_id}</span>
+                      <div key={ans.question_id || idx} className={`breakdown-card ${ans.correct ? 'is-correct' : 'is-incorrect'}`}>
+                        <div className="breakdown-card-top">
+                          <div className="breakdown-q-info">
+                            <span className="breakdown-q-index">Q{idx + 1}</span>
+                            <span className="breakdown-q-title">{ans.title || ans.question_id}</span>
+                          </div>
+                          <div className="breakdown-q-tags">
+                            <span className={`tag-marks ${ans.correct ? 'pass' : 'fail'}`}>
+                              {ans.correct ? '+1.0 Mark' : '0.0 Marks'}
+                            </span>
+                            <span className="tag-time">⏱️ {Math.round(ans.time_taken_s || 0)}s</span>
+                            {ans.auto_submitted && (
+                              <span className="tag-timeout" title="Auto-submitted on timeout">⚠️ Timed out</span>
+                            )}
+                            <span className={`tag-status ${ans.correct ? 'pass' : 'fail'}`}>
+                              {ans.correct ? '✓ Correct' : '✗ Incorrect'}
+                            </span>
+                          </div>
                         </div>
-                        <div className="breakdown-q-tags">
-                          <span className="tag-time">⏱️ {Math.round(ans.time_taken_s || 0)}s</span>
-                          {ans.auto_submitted && (
-                            <span className="tag-timeout" title="Auto-submitted on timeout">⚠️ Timed out</span>
+
+                        {/* Detailed question review */}
+                        <div className="breakdown-details">
+                          <div className="answer-comparison">
+                            <div className="user-ans-row">
+                              <span className="ans-label">Your Answer:</span>
+                              <strong className={ans.correct ? 'text-correct' : 'text-wrong'}>
+                                {ans.user_answer || 'No answer submitted'}
+                              </strong>
+                            </div>
+                            <div className="correct-ans-row">
+                              <span className="ans-label">Correct Answer:</span>
+                              <strong className="text-correct">{ans.correct_answer || 'Accepted LeetCode Submission'}</strong>
+                            </div>
+                          </div>
+
+                          {ans.options && ans.options.length > 0 && (
+                            <div className="breakdown-options-list">
+                              {ans.options.map((opt, oIdx) => {
+                                const isUser = String(opt).trim().toLowerCase() === String(ans.user_answer).trim().toLowerCase()
+                                const isRight = String(opt).trim().toLowerCase() === String(ans.correct_answer).trim().toLowerCase()
+                                return (
+                                  <div
+                                    key={oIdx}
+                                    className={`breakdown-opt-item ${isRight ? 'opt-is-correct' : ''} ${isUser && !isRight ? 'opt-is-user-wrong' : ''}`}
+                                  >
+                                    <span className="opt-marker">{String.fromCharCode(65 + oIdx)}.</span>
+                                    <span className="opt-text">{opt}</span>
+                                    {isRight && <span className="opt-badge-correct">✓ Correct</span>}
+                                    {isUser && !isRight && <span className="opt-badge-wrong">Your selection</span>}
+                                  </div>
+                                )
+                              })}
+                            </div>
                           )}
-                          <span className={`tag-status ${ans.correct ? 'pass' : 'fail'}`}>
-                            {ans.correct ? '✓ Correct' : '✗ Incorrect'}
-                          </span>
+
+                          {ans.explanation && (
+                            <div className="breakdown-explanation">
+                              <span className="explanation-title">💡 Explanation:</span>
+                              <p>{ans.explanation}</p>
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -496,7 +547,7 @@ function Diagnostic({ profile }) {
         <div className="mastery-list">
           {Object.entries(report.mastery).map(([topic, value]) => (
             <div className="mastery-row" key={topic}>
-              <span>{topic}</span>
+              <span>{report.topic_names?.[topic] || topicMap[topic] || topic}</span>
               <div className="bar"><i style={{ width: `${value * 100}%` }} /></div>
               <strong>{Math.round(value * 100)}%</strong>
             </div>
@@ -757,9 +808,9 @@ function CodingPractice() {
     setWorking('assign')
     setMessage('')
     try {
-      await apiRequest('/coding/assign', { method: 'POST' }, token)
+      const res = await apiRequest('/coding/assign', { method: 'POST' }, token)
       await loadAssignments()
-      setMessage('New coding problem assigned by AI based on your diagnostic results.')
+      setMessage(res?.user_message || res?.message || 'New coding problem assigned by AI based on your diagnostic results.')
     } catch (error) {
       setMessage(error.message)
     } finally {
@@ -848,6 +899,263 @@ function CodingPractice() {
   )
 }
 
+function AdminQuestionStaging() {
+  const { session } = useAuthStore()
+  const token = session?.access_token
+  const [adminSecret, setAdminSecret] = useState(
+    localStorage.getItem('prepos_admin_secret') || 'prepos-admin-secret-dev'
+  )
+  const [category, setCategory] = useState('Data Structures')
+  const [difficulty, setDifficulty] = useState('Medium')
+  const [count, setCount] = useState(3)
+  const [pendingList, setPendingList] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [generating, setGenerating] = useState(false)
+  const [workingId, setWorkingId] = useState(null)
+  const [statusMessage, setStatusMessage] = useState('')
+  const [errorMessage, setErrorMessage] = useState('')
+
+  const headers = useMemo(() => {
+    return { 'X-Admin-Secret': adminSecret }
+  }, [adminSecret])
+
+  async function loadPending() {
+    setLoading(true)
+    setErrorMessage('')
+    try {
+      const data = await apiRequest('/diagnostic/admin/pending-questions', { method: 'GET', headers }, token)
+      setPendingList(data || [])
+    } catch (err) {
+      setErrorMessage(err.message || 'Failed to load pending questions')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadPending()
+  }, [headers])
+
+  async function handleGenerate(e) {
+    if (e) e.preventDefault()
+    setGenerating(true)
+    setStatusMessage('')
+    setErrorMessage('')
+    try {
+      const res = await apiRequest(
+        '/diagnostic/admin/generate-questions',
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ category, difficulty, count: Number(count) }),
+        },
+        token
+      )
+      setStatusMessage(`Generated ${res.requested_count} questions. ${res.surviving_count} passed self-check and added to pending staging!`)
+      await loadPending()
+    } catch (err) {
+      setErrorMessage(err.message || 'Failed to generate questions')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  async function handleApprove(id) {
+    setWorkingId(id)
+    setStatusMessage('')
+    setErrorMessage('')
+    try {
+      await apiRequest(
+        `/diagnostic/admin/pending-questions/${id}/approve`,
+        { method: 'POST', headers },
+        token
+      )
+      setPendingList((cur) => cur.filter((item) => item.id !== id))
+      setStatusMessage('Question approved and moved into live question bank!')
+    } catch (err) {
+      setErrorMessage(err.message || 'Failed to approve question')
+    } finally {
+      setWorkingId(null)
+    }
+  }
+
+  async function handleReject(id) {
+    setWorkingId(id)
+    setStatusMessage('')
+    setErrorMessage('')
+    try {
+      await apiRequest(
+        `/diagnostic/admin/pending-questions/${id}/reject`,
+        { method: 'POST', headers },
+        token
+      )
+      setPendingList((cur) => cur.filter((item) => item.id !== id))
+      setStatusMessage('Question rejected and discarded.')
+    } catch (err) {
+      setErrorMessage(err.message || 'Failed to reject question')
+    } finally {
+      setWorkingId(null)
+    }
+  }
+
+  return (
+    <div className="admin-staging-page">
+      <div className="page-heading">
+        <div>
+          <div className="eyebrow">Admin Console</div>
+          <h2>AI Question Staging</h2>
+          <p>Generate, independently verify with Groq self-check, and review questions before publishing to students.</p>
+        </div>
+      </div>
+
+      <div className="card admin-controls-card">
+        <h3>Trigger AI Generation (via Groq)</h3>
+        <form onSubmit={handleGenerate} className="admin-controls-grid">
+          <div>
+            <label>Category / Topic</label>
+            <input
+              type="text"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="e.g. Data Structures, OS, Algorithms"
+              required
+            />
+          </div>
+          <div>
+            <label>Difficulty</label>
+            <select
+              value={difficulty}
+              onChange={(e) => setDifficulty(e.target.value)}
+              className="admin-select"
+            >
+              <option value="Easy">Easy</option>
+              <option value="Medium">Medium</option>
+              <option value="Hard">Hard</option>
+            </select>
+          </div>
+          <div>
+            <label>Count (max 20)</label>
+            <input
+              type="number"
+              min="1"
+              max="20"
+              value={count}
+              onChange={(e) => setCount(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label>Admin Secret</label>
+            <input
+              type="password"
+              value={adminSecret}
+              onChange={(e) => {
+                setAdminSecret(e.target.value)
+                localStorage.setItem('prepos_admin_secret', e.target.value)
+              }}
+              placeholder="Shared secret from .env"
+            />
+          </div>
+          <div className="admin-btn-col">
+            <button type="submit" disabled={generating}>
+              {generating ? 'Generating & Self-Checking...' : 'Generate with Groq'}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {statusMessage && <div className="admin-alert success">{statusMessage}</div>}
+      {errorMessage && <div className="admin-alert error">{errorMessage}</div>}
+
+      <div className="section-heading" style={{ marginTop: '24px', marginBottom: '16px' }}>
+        <div>
+          <h3>Pending Questions ({pendingList.length})</h3>
+          <p>Manual review staging area. Questions only enter the live pool when approved.</p>
+        </div>
+        <button className="secondary" onClick={loadPending} disabled={loading}>
+          {loading ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="card"><div className="skeleton" /><div className="skeleton" /></div>
+      ) : pendingList.length === 0 ? (
+        <div className="card empty-inline">
+          <strong>No pending questions in staging.</strong>
+          <span>Generate questions using the panel above, or all pending questions have been reviewed.</span>
+        </div>
+      ) : (
+        <div className="admin-questions-list">
+          {pendingList.map((q) => (
+            <article className="card admin-question-card" key={q.id}>
+              <div className="admin-card-header">
+                <span className="badge-category">{q.category}</span>
+                <span className={`badge-difficulty diff-${String(q.difficulty).toLowerCase()}`}>{q.difficulty}</span>
+                <span className="badge-id">{q.id.slice(0, 8)}...</span>
+              </div>
+
+              <div className="admin-question-body">
+                <strong>{q.body}</strong>
+              </div>
+
+              <div className="admin-options-grid">
+                {(q.options || []).map((opt, idx) => {
+                  const isStatedAnswer = idx === Number(q.answer_index)
+                  return (
+                    <div
+                      key={idx}
+                      className={`admin-option-item ${isStatedAnswer ? 'stated-answer' : ''}`}
+                    >
+                      <span className="opt-index">{idx}:</span>
+                      <span className="opt-text">{opt}</span>
+                      {isStatedAnswer && <span className="opt-tag">✓ Stated Answer</span>}
+                    </div>
+                  )
+                })}
+              </div>
+
+              {q.explanation && (
+                <div className="admin-explanation">
+                  <strong>Explanation:</strong> {q.explanation}
+                </div>
+              )}
+
+              <div className="admin-self-check-box">
+                <div className="self-check-header">
+                  <span className="self-check-badge">✓ Model Self-Check: Passed</span>
+                  <span className="self-check-note">Independently derived answer matches stated answer</span>
+                </div>
+                {q.self_check_reasoning && (
+                  <p className="self-check-reasoning">
+                    <strong>Model Reasoning:</strong> {q.self_check_reasoning}
+                  </p>
+                )}
+              </div>
+
+              <div className="admin-actions">
+                <button
+                  disabled={workingId === q.id}
+                  onClick={() => handleApprove(q.id)}
+                  className="btn-approve"
+                >
+                  {workingId === q.id ? 'Approving...' : 'Approve into Question Bank'}
+                </button>
+                <button
+                  disabled={workingId === q.id}
+                  onClick={() => handleReject(q.id)}
+                  className="secondary btn-reject"
+                >
+                  {workingId === q.id ? 'Rejecting...' : 'Reject & Discard'}
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function AppShell() {
   const { session, clearSession } = useAuthStore()
   const currentToken = session?.access_token
@@ -872,12 +1180,31 @@ function AppShell() {
       .finally(() => setProfileLoading(false))
   }, [currentToken])
 
+  const [topicMap, setTopicMap] = useState({})
+
+  useEffect(() => {
+    apiRequest('/topics', { method: 'GET' })
+      .then((data) => {
+        if (Array.isArray(data)) {
+          const map = {}
+          data.forEach((t) => {
+            if (t?.id && t?.name) {
+              map[t.id] = t.name
+            }
+          })
+          setTopicMap(map)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
   const page = useMemo(() => {
     const pathname = window.location.pathname
     if (pathname === '/diagnostic') return 'Diagnostic'
     if (pathname === '/planner') return 'Planner'
     if (pathname === '/profile') return 'Profile'
     if (pathname === '/coding') return 'Coding Practice'
+    if (pathname === '/admin/questions') return 'Question Staging'
     if (pathname === '/review') return 'Review'
     if (pathname === '/interview') return 'Interview'
     return 'Dashboard'
@@ -902,11 +1229,12 @@ function AppShell() {
       </aside>
       <main className="content">
         <div className="page-frame">
-          {page === 'Dashboard' && <Dashboard profile={profile} />}
-          {page === 'Diagnostic' && <Diagnostic profile={profile} />}
+          {page === 'Dashboard' && <Dashboard profile={profile} topicMap={topicMap} />}
+          {page === 'Diagnostic' && <Diagnostic profile={profile} topicMap={topicMap} />}
           {page === 'Planner' && <Planner />}
           {page === 'Profile' && <Profile profile={profile} loading={profileLoading} error={profileError} onSaved={setProfile} />}
           {page === 'Coding Practice' && <CodingPractice />}
+          {page === 'Question Staging' && <AdminQuestionStaging />}
           {page === 'Review' && <div className="card"><h3>Review</h3><p>Review workspace is coming soon.</p></div>}
           {page === 'Interview' && <div className="card"><h3>Interview</h3><p>Interview workspace is coming soon.</p></div>}
         </div>

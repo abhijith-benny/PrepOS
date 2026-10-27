@@ -39,10 +39,12 @@ class InMemoryCodingRepository:
 
     def choose(self, user_id: str, weak_topic_ids: list[str], rationale: str | None = None) -> dict[str, Any]:
         assigned = {item["problem_id"] for item in self.assignments.get(user_id, [])}
-        problem = next((item for item in self.problems if item["id"] not in assigned and (not weak_topic_ids or item["topic_id"] in weak_topic_ids)), None) or next((item for item in self.problems if item["id"] not in assigned), None)
-        if not problem and self.problems:
-            problem = self.problems[0]
-        return self.assign_problem(user_id, problem["id"] if problem else "problem-0", rationale=rationale)
+        problem = next((item for item in self.problems if item["id"] not in assigned and (weak_topic_ids and item["topic_id"] in weak_topic_ids)), None)
+        if not problem:
+            problem = next((item for item in self.problems if item["id"] not in assigned), None)
+        if not problem:
+            raise ValueError("No unassigned coding problems are available")
+        return self.assign_problem(user_id, problem["id"], rationale=rationale)
 
     def suggest_problems(self, topic_ids: list[str], limit: int = 3) -> list[dict[str, Any]]:
         """Return up to *limit* problems for the given topic_ids without creating assignments."""
@@ -85,20 +87,19 @@ class SupabaseCodingRepository:
         return {**saved, "problem": problem, "rationale": rationale}
 
     def choose(self, user_id: str, weak_topic_ids: list[str], rationale: str | None = None) -> dict[str, Any]:
-        query = self.client.table("coding_problems").select("*")
-        if weak_topic_ids:
-            query = query.in_("topic_id", weak_topic_ids)
-        problems = retry_supabase(lambda: query.limit(20).execute()).data
-        if not problems:
-            problems = retry_supabase(lambda: self.client.table("coding_problems").select("*").limit(20).execute()).data
         assigned = retry_supabase(lambda: self.client.table("coding_assignments").select("problem_id").eq("user_id", user_id).execute()).data
         used = {row["problem_id"] for row in assigned}
+
+        problems = []
+        if weak_topic_ids:
+            query = self.client.table("coding_problems").select("*").in_("topic_id", weak_topic_ids)
+            problems = retry_supabase(lambda: query.limit(50).execute()).data or []
         problem = next((row for row in problems if row["id"] not in used), None)
         if not problem:
-            if problems:
-                problem = problems[0]
-            else:
-                raise ValueError("No unassigned coding problems are available")
+            all_problems = retry_supabase(lambda: self.client.table("coding_problems").select("*").limit(100).execute()).data or []
+            problem = next((row for row in all_problems if row["id"] not in used), None)
+        if not problem:
+            raise ValueError("No unassigned coding problems are available")
         return self.assign_problem(user_id, problem["id"], rationale=rationale)
 
     def suggest_problems(self, topic_ids: list[str], limit: int = 3) -> list[dict[str, Any]]:

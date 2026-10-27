@@ -199,3 +199,115 @@ def test_ai_selection_rejects_invalid_id_and_retries_once() -> None:
     assert fallback_rationale != ""
 
 
+def test_assign_never_repeats_problem_id(monkeypatch) -> None:
+    """Assign a problem, assign again, confirm second call never returns the same problem id as the first."""
+    profile = InMemoryProfileRepository()
+    repository = InMemoryCodingRepository()
+    user_id = "test-no-repeat-user"
+    profile.save(user_id, {"leetcode_username": "coder", "target_difficulty": "Easy"})
+    monkeypatch.setattr(coding_router, "profile_repository", profile)
+    monkeypatch.setattr(coding_router, "coding_repository", repository)
+
+    app.dependency_overrides[get_current_user] = lambda: {"id": user_id, "email": "repeat@example.com"}
+    try:
+        client = TestClient(app)
+        # Call 1
+        res1 = client.post("/coding/assign")
+        assert res1.status_code == 200, res1.text
+        prob1_id = res1.json()["problem_id"]
+
+        # Call 2
+        res2 = client.post("/coding/assign")
+        assert res2.status_code == 200, res2.text
+        prob2_id = res2.json()["problem_id"]
+
+        # Confirm second call never returns the same problem id
+        assert prob1_id != prob2_id
+
+        # Call 3
+        res3 = client.post("/coding/assign")
+        assert res3.status_code == 200, res3.text
+        prob3_id = res3.json()["problem_id"]
+        assert prob3_id not in (prob1_id, prob2_id)
+
+        # Call 4 - bank exhausted (3 total problems in InMemoryCodingRepository)
+        res4 = client.post("/coding/assign")
+        assert res4.status_code == 422
+        assert "No unassigned coding problems" in res4.json()["detail"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_assign_blocks_regardless_of_status(monkeypatch) -> None:
+    """Confirm pending, verified, or failed_to_verify all block reassignment of that exact problem."""
+    profile = InMemoryProfileRepository()
+    repository = InMemoryCodingRepository()
+    user_id = "status-user"
+    profile.save(user_id, {"leetcode_username": "coder"})
+    monkeypatch.setattr(coding_router, "profile_repository", profile)
+    monkeypatch.setattr(coding_router, "coding_repository", repository)
+
+    # Seed an assignment with 'failed_to_verify' and another with 'verified'
+    repository.assign_problem(user_id, "problem-0")
+    # update problem-0 to failed_to_verify
+    assignments = repository.list_for_user(user_id)
+    repository.update(user_id, assignments[0]["id"], "failed_to_verify")
+
+    repository.assign_problem(user_id, "problem-1")
+    assignments = repository.list_for_user(user_id)
+    repository.update(user_id, assignments[1]["id"], "verified")
+
+    app.dependency_overrides[get_current_user] = lambda: {"id": user_id, "email": "status@example.com"}
+    try:
+        client = TestClient(app)
+        res = client.post("/coding/assign")
+        assert res.status_code == 200
+        # Must pick problem-2, NOT problem-0 or problem-1
+        assert res.json()["problem_id"] == "problem-2"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_assign_fallback_when_weak_topics_exhausted(monkeypatch) -> None:
+    """When all eligible problems for weak topics are assigned, fall back to next-weakest topic's problems and notify user."""
+    profile = InMemoryProfileRepository()
+    repository = InMemoryCodingRepository()
+    # Configure 4 problems: 2 in topic-weak, 2 in topic-next
+    repository.problems = [
+        {"id": "prob-w1", "leetcode_slug": "w1", "title": "Weak 1", "difficulty": "Easy", "topic_id": "topic-weak"},
+        {"id": "prob-w2", "leetcode_slug": "w2", "title": "Weak 2", "difficulty": "Easy", "topic_id": "topic-weak"},
+        {"id": "prob-n1", "leetcode_slug": "n1", "title": "Next 1", "difficulty": "Easy", "topic_id": "topic-next"},
+        {"id": "prob-n2", "leetcode_slug": "n2", "title": "Next 2", "difficulty": "Easy", "topic_id": "topic-next"},
+    ]
+    user_id = "fallback-user"
+    profile.save(user_id, {"leetcode_username": "coder"})
+    monkeypatch.setattr(coding_router, "profile_repository", profile)
+    monkeypatch.setattr(coding_router, "coding_repository", repository)
+    monkeypatch.setattr(coding_router, "get_user_weak_topics", lambda uid: ["topic-weak", "topic-next"])
+
+    app.dependency_overrides[get_current_user] = lambda: {"id": user_id, "email": "fallback@example.com"}
+    try:
+        client = TestClient(app)
+        # 1st assign -> weak topic
+        res1 = client.post("/coding/assign")
+        assert res1.status_code == 200
+        assert res1.json()["problem_id"] in ("prob-w1", "prob-w2")
+        assert "user_message" not in res1.json()
+
+        # 2nd assign -> second weak topic problem
+        res2 = client.post("/coding/assign")
+        assert res2.status_code == 200
+        assert res2.json()["problem_id"] in ("prob-w1", "prob-w2")
+        assert res2.json()["problem_id"] != res1.json()["problem_id"]
+
+        # 3rd assign -> all weak topic problems assigned! Must fall back to topic-next with explicit user message
+        res3 = client.post("/coding/assign")
+        assert res3.status_code == 200
+        assert res3.json()["problem_id"] in ("prob-n1", "prob-n2")
+        expected_msg = "You've been assigned all available problems for your top weak areas — showing problems for your next focus area"
+        assert res3.json().get("user_message") == expected_msg
+        assert res3.json().get("message") == expected_msg
+    finally:
+        app.dependency_overrides.clear()
+
+

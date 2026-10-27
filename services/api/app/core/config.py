@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     jwt_issuer: str = Field(default="", alias="JWT_ISSUER")
     jwt_audience: str = Field(default="authenticated", alias="JWT_AUDIENCE")
     api_base_url: str = Field(default="http://localhost:8000", alias="API_BASE_URL")
+    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
+    groq_model: str = Field(default="openai/gpt-oss-120b", alias="GROQ_MODEL")
+    admin_secret: str = Field(default="prepos-admin-secret-dev", alias="ADMIN_SECRET")
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
