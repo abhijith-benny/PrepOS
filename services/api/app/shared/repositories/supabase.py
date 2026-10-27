@@ -6,6 +6,7 @@ from typing import Any
 from supabase import Client, create_client
 
 from app.shared.schemas import SkillState
+from app.shared.repositories.retry import retry_supabase
 
 
 class SupabaseSkillRepository:
@@ -16,7 +17,7 @@ class SupabaseSkillRepository:
 
     def get_for_user(self, user_id: str) -> dict[str, SkillState]:
         try:
-            rows = self.client.table("skill_states").select("*").eq("user_id", user_id).execute().data
+            rows = retry_supabase(lambda: self.client.table("skill_states").select("*").eq("user_id", user_id).execute()).data
             remote = {row["topic_id"]: SkillState.model_validate(row) for row in rows}
         except Exception:
             remote = {}
@@ -36,7 +37,7 @@ class SupabaseSkillRepository:
             "updated_at": state.updated_at.isoformat() if state.updated_at else None,
         }
         try:
-            saved = self.client.table("skill_states").upsert(row, on_conflict="user_id,topic_id").execute().data
+            saved = retry_supabase(lambda: self.client.table("skill_states").upsert(row, on_conflict="user_id,topic_id").execute()).data
             return SkillState.model_validate(saved[0] if saved else row)
         except Exception:
             return state  # Return the local state as fallback
@@ -57,7 +58,7 @@ class SupabaseEventRepository:
         if created_at is not None:
             row["created_at"] = created_at.isoformat()
         try:
-            saved = self.client.table("events").insert(row).execute().data
+            saved = retry_supabase(lambda: self.client.table("events").insert(row).execute()).data
             return saved[0] if saved else row
         except Exception:
             return row  # Gracefully degrade — return the row dict in-memory
@@ -75,7 +76,7 @@ class SupabaseAttemptRepository:
             "time_taken_s": attempt.get("time_taken_s"),
         }
         try:
-            saved = self.client.table("attempts").insert(row).execute().data
+            saved = retry_supabase(lambda: self.client.table("attempts").insert(row).execute()).data
             return saved[0] if saved else row
         except Exception:
             return row  # Gracefully degrade to in-memory

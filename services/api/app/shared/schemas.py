@@ -17,6 +17,10 @@ class UserProfile(BaseModel):
     target_role: str | None = None
     target_date: str | None = None
     weekly_hours: int | None = None
+    department: str | None = None
+    year_or_semester: str | None = None
+    known_languages: list[str] | None = None
+    leetcode_username: str | None = None
 
 
 class UserProfileUpdate(BaseModel):
@@ -24,6 +28,10 @@ class UserProfileUpdate(BaseModel):
     target_role: str | None = None
     target_date: str | None = None
     weekly_hours: int | None = Field(default=None, ge=1, le=80)
+    department: str | None = None
+    year_or_semester: str | None = None
+    known_languages: list[str] | None = None
+    leetcode_username: str | None = None
 
 
 class MeResponse(UserProfile):
