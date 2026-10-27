@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+
 import { supabase } from './supabaseClient'
 import { useAuthStore } from './store/authStore'
 import { apiRequest } from './apiClient'
@@ -179,7 +180,55 @@ function Diagnostic({ profile }) {
   const [inputLeetcodeUser, setInputLeetcodeUser] = useState('')
   const [savingUser, setSavingUser] = useState(false)
 
+  // Timer states & refs
+  const [timeLeft, setTimeLeft] = useState(60)
+  const [timeLimit, setTimeLimit] = useState(60)
+  const [selectedOption, setSelectedOption] = useState(null)
+  const autoSubmittingRef = useRef(false)
+  const answeringRef = useRef(false)
+  const selectedOptionRef = useRef(null)
+  const questionStartMsRef = useRef(Date.now())
+
   const token = session?.access_token
+  const isCodingSection = currentSection?.id === 'coding' || question?.type === 'leetcode'
+
+  // Keep selectedOptionRef in sync with selectedOption
+  useEffect(() => {
+    selectedOptionRef.current = selectedOption
+  }, [selectedOption])
+
+  // Timer countdown hook with auto-submit
+  useEffect(() => {
+    if (!question || report || sectionTransition) return
+
+    autoSubmittingRef.current = false
+
+    const updateTimer = () => {
+      const elapsed = Math.floor((Date.now() - questionStartMsRef.current) / 1000)
+      const remaining = Math.max(0, timeLimit - elapsed)
+      setTimeLeft(remaining)
+      if (remaining <= 0) {
+        if (!autoSubmittingRef.current && !answeringRef.current) {
+          autoSubmittingRef.current = true
+          const autoVal = selectedOptionRef.current || (isCodingSection ? 'skipped' : 'unanswered')
+          answer(autoVal, true)
+        }
+      }
+    }
+
+    updateTimer()
+    const timer = setInterval(updateTimer, 500)
+    return () => clearInterval(timer)
+  }, [question?.id, timeLimit, report, sectionTransition, isCodingSection])
+
+  function formatTimeDisplay(seconds, isCoding) {
+    if (isCoding) {
+      const mins = Math.floor(seconds / 60)
+      const secs = seconds % 60
+      return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+    }
+    return `${seconds}s`
+  }
 
   async function start() {
     setError('')
@@ -210,10 +259,20 @@ function Diagnostic({ profile }) {
     setProgress(next.progress)
     setQuestion(next.question)
     setCurrentSection(next.section || null)
-    setStartedAt(Date.now())
     setSectionTransition(null)
     setVerifyMessage('')
     setVerifyStatus('idle')
+    setSelectedOption(null)
+    selectedOptionRef.current = null
+    autoSubmittingRef.current = false
+
+    const limit = next.time_limit_s || (next.section?.id === 'coding' ? 1500 : 60)
+    setTimeLimit(limit)
+    const startMs = next.served_at ? new Date(next.served_at).getTime() : Date.now()
+    questionStartMsRef.current = startMs
+    setStartedAt(startMs)
+    const initialRemaining = Math.max(0, limit - Math.floor((Date.now() - startMs) / 1000))
+    setTimeLeft(initialRemaining)
   }
 
   async function verifyCodingProblem(assignmentId) {
@@ -231,7 +290,7 @@ function Diagnostic({ profile }) {
         setVerifyStatus('success')
         setVerifyMessage('Accepted submission verified! Submitting coding section...')
         setTimeout(() => {
-          answer('verified')
+          answer('verified', false)
         }, 1200)
       } else {
         setVerifyStatus('error')
@@ -268,13 +327,21 @@ function Diagnostic({ profile }) {
     }
   }
 
-  async function answer(value) {
+  async function answer(value, autoSubmitted = false) {
+    if (answeringRef.current) return
+    answeringRef.current = true
     setAnswering(true)
     setError('')
     try {
+      const elapsedSec = (Date.now() - questionStartMsRef.current) / 1000
       await apiRequest(`/diagnostic/sessions/${sessionId}/answer`, {
         method: 'POST',
-        body: JSON.stringify({ question_id: question.id, answer: value, time_taken_s: (Date.now() - startedAt) / 1000 }),
+        body: JSON.stringify({
+          question_id: question.id,
+          answer: value || (isCodingSection ? 'skipped' : 'unanswered'),
+          time_taken_s: Math.max(0, elapsedSec),
+          auto_submitted: Boolean(autoSubmitted),
+        }),
       }, token)
       const next = await apiRequest(`/diagnostic/sessions/${sessionId}/next`, { method: 'GET' }, token)
       setProgress(next.progress)
@@ -292,11 +359,21 @@ function Diagnostic({ profile }) {
       } else {
         setQuestion(next.question)
         setCurrentSection(next.section || null)
-        setStartedAt(Date.now())
+        setSelectedOption(null)
+        selectedOptionRef.current = null
+        autoSubmittingRef.current = false
+        const limit = next.time_limit_s || (next.section?.id === 'coding' ? 1500 : 60)
+        setTimeLimit(limit)
+        const startMs = next.served_at ? new Date(next.served_at).getTime() : Date.now()
+        questionStartMsRef.current = startMs
+        setStartedAt(startMs)
+        const initialRemaining = Math.max(0, limit - Math.floor((Date.now() - startMs) / 1000))
+        setTimeLeft(initialRemaining)
       }
     } catch (err) {
       setError(err.message)
     } finally {
+      answeringRef.current = false
       setAnswering(false)
     }
   }
@@ -304,9 +381,37 @@ function Diagnostic({ profile }) {
   if (report) {
     const codingSection = (report.sections || []).find((s) => s.id === 'coding')
     const suggestedProblems = codingSuggestions?.has_problems ? codingSuggestions.problems : []
+    const overallPct = report.overall_score_percentage !== undefined
+      ? report.overall_score_percentage
+      : Math.round(((report.total_correct || 0) / Math.max(1, report.total_questions || 1)) * 100)
+    const totalCorrect = report.total_correct ?? (report.sections || []).reduce((acc, s) => acc + (s.correct_count || 0), 0)
+    const totalQuestions = report.total_questions ?? (report.sections || []).reduce((acc, s) => acc + (s.question_count || 0), 0)
+
     return (
       <section className="diagnostic-panel report-panel">
         <div className="eyebrow">Diagnostic complete</div>
+
+        {/* Prominent Overall Score Summary Banner */}
+        <div className="overall-score-hero">
+          <div className="overall-score-tag">Mock Test Overall Mark</div>
+          <div className="overall-score-main">
+            <div className="overall-score-circle">
+              <span className="score-number">{overallPct}%</span>
+              <span className="score-desc">Overall Mark</span>
+            </div>
+            <div className="overall-score-meta">
+              <h3>Diagnostic Calibration Complete</h3>
+              <p>
+                Overall Score: <strong>{totalCorrect}</strong> / <strong>{totalQuestions}</strong> questions correct across all sections ({overallPct}%).
+              </p>
+              <div className="score-badges">
+                <span className="badge-item">🎯 Profile: {report.cluster_label || 'Assigned'}</span>
+                <span className="badge-item">📈 Calibration: {Math.round((report.confidence || 0.8) * 100)}% confidence</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div className="report-heading">
           <div><h2>{report.cluster_label}</h2><p>Your first profile is ready. Use it as a starting point, not a ceiling.</p></div>
           <div className="confidence-ring"><strong>{Math.round(report.confidence * 100)}%</strong><span>confidence</span></div>
@@ -314,13 +419,47 @@ function Diagnostic({ profile }) {
         <div className="section-report-list">
           {(report.sections || []).map((section) => (
             <article className="section-report" key={section.id}>
-              <div>
-                <strong>{section.label}</strong>
-                <span>{section.description}</span>
+              <div className="section-header-row">
+                <div>
+                  <strong>{section.label}</strong>
+                  <span>{section.description}</span>
+                </div>
+                <div className="section-stats-summary">
+                  <b>{section.correct_count}/{section.question_limit} correct</b>
+                  {section.time_taken_s !== undefined && (
+                    <span className="section-total-time">⏱️ Total: {Math.round(section.time_taken_s)}s</span>
+                  )}
+                </div>
               </div>
-              <b>{section.correct_count}/{section.question_limit}</b>
               <div className="section-score"><i style={{ width: `${section.score * 100}%` }} /></div>
-              <small>Strong: {section.strong_topics.join(', ') || 'Building signal'} · Focus: {section.weak_topics.join(', ') || 'Building signal'}</small>
+              <small>Strong: {section.strong_topics?.join(', ') || 'Building signal'} · Focus: {section.weak_topics?.join(', ') || 'Building signal'}</small>
+
+              {/* Question-level breakdown showing correct, time taken, and timeout flag */}
+              {section.answers && section.answers.length > 0 && (
+                <div className="section-breakdown-box">
+                  <div className="breakdown-headline">Question Breakdown</div>
+                  <div className="breakdown-rows">
+                    {section.answers.map((ans, idx) => (
+                      <div key={ans.question_id || idx} className={`breakdown-item ${ans.correct ? 'is-correct' : 'is-incorrect'}`}>
+                        <div className="breakdown-q-info">
+                          <span className="breakdown-q-index">Q{idx + 1}</span>
+                          <span className="breakdown-q-title">{ans.title || ans.question_id}</span>
+                        </div>
+                        <div className="breakdown-q-tags">
+                          <span className="tag-time">⏱️ {Math.round(ans.time_taken_s || 0)}s</span>
+                          {ans.auto_submitted && (
+                            <span className="tag-timeout" title="Auto-submitted on timeout">⚠️ Timed out</span>
+                          )}
+                          <span className={`tag-status ${ans.correct ? 'pass' : 'fail'}`}>
+                            {ans.correct ? '✓ Correct' : '✗ Incorrect'}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {section.id === 'coding' && suggestedProblems.length > 0 && (
                 <div className="coding-cta">
                   <div className="coding-cta-header">
@@ -370,7 +509,9 @@ function Diagnostic({ profile }) {
 
   if (!sessionId) return <section className="diagnostic-panel diagnostic-start"><div className="eyebrow">Placement diagnostic</div><div className="diagnostic-kicker">01 <span>/</span> 04 sections</div><h2>{profile?.department ? 'Find your starting point' : 'Complete your profile first'}</h2><p>{profile?.department ? 'Answer a focused set of questions so PrepOS can shape your practice plan around the skills that matter most.' : 'Add your department and context on your Profile page before starting the placement test.'}</p>{error && <p className="error">{error}</p>}{profile?.department ? <button onClick={start}>Start diagnostic <span aria-hidden="true">→</span></button> : <a className="profile-gate" href="/profile">Go to Profile <span aria-hidden="true">→</span></a>}</section>
   if (sectionTransition) return <section className="diagnostic-panel section-transition"><div className="eyebrow">Section complete</div><div className="transition-mark">✓</div><h2>Nice work. {sectionTransition.label} is complete.</h2><p>Take a breath, then continue into the next part of the placement test.</p><button onClick={() => loadNext()}>Continue to {sectionTransition.label}</button></section>
-  const isCodingSection = currentSection?.id === 'coding' || question?.type === 'leetcode'
+
+  const isTimerWarning = timeLeft <= 10 && timeLeft > 0
+  const isTimerExpired = timeLeft === 0
 
   return (
     <section className="diagnostic-panel question-panel">
@@ -381,7 +522,11 @@ function Diagnostic({ profile }) {
       </div>
       <div className="progress-line">
         <span>{isCodingSection ? 'Practical Coding Challenge' : `Question ${progress + 1} of ${currentSection?.question_limit || 10}`}</span>
-        <span className="timer">{isCodingSection ? 'LeetCode Verified' : 'Adaptive placement'}</span>
+        <div className={`timer-pill ${isTimerWarning ? 'timer-warning' : ''} ${isTimerExpired ? 'timer-expired' : ''}`}>
+          <span className="timer-icon">{isTimerWarning ? '⚠️' : '⏱️'}</span>
+          <span className="timer-display">{formatTimeDisplay(timeLeft, isCodingSection)}</span>
+          {isTimerWarning && <span className="timer-subtext">Auto-submitting soon</span>}
+        </div>
       </div>
       <div className="progress-track">
         <i style={{ width: `${isCodingSection ? 100 : Math.min((progress / (currentSection?.question_limit || 10)) * 100, 100)}%` }} />
@@ -389,7 +534,7 @@ function Diagnostic({ profile }) {
       {question ? (
         isCodingSection ? (
           <div className="coding-challenge-container">
-            <div className="question-meta">Section 4 · Coding <span>•</span> Direct LeetCode Problem</div>
+            <div className="question-meta">Section 4 · Coding <span>•</span> Direct LeetCode Problem (25 min limit)</div>
             <div className="coding-challenge-header">
               <div>
                 <span className="coding-challenge-eyebrow">LeetCode Assessment</span>
@@ -444,7 +589,7 @@ function Diagnostic({ profile }) {
                       type="button"
                       className="secondary"
                       disabled={answering || verifying}
-                      onClick={() => answer('skipped')}
+                      onClick={() => answer('skipped', false)}
                     >
                       Continue / Skip verification →
                     </button>
@@ -475,7 +620,7 @@ function Diagnostic({ profile }) {
                     type="button"
                     className="secondary link-style"
                     disabled={answering}
-                    onClick={() => answer('skipped')}
+                    onClick={() => answer('skipped', false)}
                   >
                     Continue without LeetCode verification →
                   </button>
@@ -485,15 +630,43 @@ function Diagnostic({ profile }) {
           </div>
         ) : (
           <>
-            <div className="question-meta">Topic check <span>•</span> Take your best answer</div>
+            <div className="question-meta">Topic check <span>•</span> 60 seconds per question</div>
             <h2>{question.body}</h2>
             <div className="answer-grid">
-              {(question.options || []).map((option, index) => (
-                <button disabled={answering} key={option} className="answer-button" onClick={() => answer(option)}>
-                  <span className="answer-index">{String.fromCharCode(65 + index)}</span>
-                  <span>{option}</span>
-                </button>
-              ))}
+              {(question.options || []).map((option, index) => {
+                const isSelected = selectedOption === option
+                return (
+                  <button
+                    type="button"
+                    disabled={answering}
+                    key={option}
+                    className={`answer-button ${isSelected ? 'selected' : ''}`}
+                    onClick={() => setSelectedOption(option)}
+                  >
+                    <span className="answer-index">{String.fromCharCode(65 + index)}</span>
+                    <span>{option}</span>
+                    {isSelected && <span className="selected-indicator">✓</span>}
+                  </button>
+                )
+              })}
+            </div>
+            <div className="answer-submit-bar">
+              <button
+                type="button"
+                className="confirm-answer-btn"
+                disabled={!selectedOption || answering}
+                onClick={() => answer(selectedOption, false)}
+              >
+                {answering ? 'Submitting...' : 'Confirm Answer →'}
+              </button>
+              <button
+                type="button"
+                className="skip-btn"
+                disabled={answering}
+                onClick={() => answer('skipped', false)}
+              >
+                Skip Question
+              </button>
             </div>
           </>
         )
@@ -584,9 +757,9 @@ function CodingPractice() {
     setWorking('assign')
     setMessage('')
     try {
-      const created = await apiRequest('/coding/assign', { method: 'POST' }, token)
-      setAssignments((current) => [created, ...current])
-      setMessage('Problem assigned.')
+      await apiRequest('/coding/assign', { method: 'POST' }, token)
+      await loadAssignments()
+      setMessage('New coding problem assigned by AI based on your diagnostic results.')
     } catch (error) {
       setMessage(error.message)
     } finally {
@@ -608,7 +781,71 @@ function CodingPractice() {
     }
   }
 
-  return <div className="coding-page"><div className="page-heading"><div><div className="eyebrow">LeetCode verified</div><h2>Coding practice</h2><p>Solve assigned problems on LeetCode, then verify an Accepted submission here.</p></div><button disabled={working === 'assign'} onClick={assign}>{working === 'assign' ? 'Saving...' : 'Assign a problem'}</button></div>{message && <p className="planner-message">{message}</p>}{loading ? <div className="card"><div className="skeleton" /><div className="skeleton short" /></div> : assignments.length === 0 ? <div className="card empty-inline"><strong>No coding problems assigned yet.</strong><span>Assign one to begin.</span></div> : <div className="coding-list">{assignments.map((assignment) => <article className="coding-card" key={assignment.id}><div><span className="coding-difficulty">{assignment.problem?.difficulty}</span><h3>{assignment.problem?.title}</h3><p>{assignment.status === 'verified' ? 'Accepted submission verified.' : assignment.status === 'failed_to_verify' ? 'No Accepted submission found after assignment.' : 'Pending verification.'}</p></div><div className="coding-actions"><a href={`https://leetcode.com/problems/${assignment.problem?.leetcode_slug}/`} target="_blank" rel="noreferrer">Solve on LeetCode ↗</a>{assignment.status !== 'verified' && <button disabled={working === assignment.id} onClick={() => verify(assignment.id)}>{working === assignment.id ? 'Checking...' : 'Check my submission'}</button>}<span className={`status-pill ${assignment.status}`}>{assignment.status.replaceAll('_', ' ')}</span></div></article>)}</div>}</div>
+  return (
+    <div className="coding-page">
+      <div className="page-heading">
+        <div>
+          <div className="eyebrow">LeetCode verified</div>
+          <h2>Coding practice</h2>
+          <p>Solve assigned problems on LeetCode, then verify an Accepted submission here.</p>
+        </div>
+        <button disabled={working === 'assign'} onClick={assign}>
+          {working === 'assign' ? 'Assigning...' : 'Assign AI Problem'}
+        </button>
+      </div>
+      {message && <p className="planner-message">{message}</p>}
+      {loading ? (
+        <div className="card"><div className="skeleton" /><div className="skeleton short" /></div>
+      ) : assignments.length === 0 ? (
+        <div className="card empty-inline">
+          <strong>No coding problems assigned yet.</strong>
+          <span>Assign one to begin.</span>
+        </div>
+      ) : (
+        <div className="coding-list">
+          {assignments.map((assignment) => (
+            <article className="coding-card" key={assignment.id}>
+              <div className="coding-card-content">
+                <span className={`coding-difficulty coding-diff-${(assignment.problem?.difficulty || 'easy').toLowerCase()}`}>
+                  {assignment.problem?.difficulty}
+                </span>
+                <h3>{assignment.problem?.title}</h3>
+                {assignment.rationale && (
+                  <div className="coding-rationale-box">
+                    <span className="rationale-tag">🤖 AI Rationale</span>
+                    <p className="rationale-text"><strong>Assigned because:</strong> {assignment.rationale}</p>
+                  </div>
+                )}
+                <p className="coding-status-desc">
+                  {assignment.status === 'verified'
+                    ? '✓ Accepted submission verified on LeetCode.'
+                    : assignment.status === 'failed_to_verify'
+                    ? 'No Accepted submission found after assignment.'
+                    : 'Pending verification.'}
+                </p>
+              </div>
+              <div className="coding-actions">
+                <a
+                  href={`https://leetcode.com/problems/${assignment.problem?.leetcode_slug}/`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn-leetcode-link"
+                >
+                  Solve on LeetCode ↗
+                </a>
+                {assignment.status !== 'verified' && (
+                  <button disabled={working === assignment.id} onClick={() => verify(assignment.id)}>
+                    {working === assignment.id ? 'Checking...' : 'Check my submission'}
+                  </button>
+                )}
+                <span className={`status-pill ${assignment.status}`}>{assignment.status.replaceAll('_', ' ')}</span>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function AppShell() {

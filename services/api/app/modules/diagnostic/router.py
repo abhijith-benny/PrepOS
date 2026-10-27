@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.core.deps import get_current_user
 from app.shared.events import DiagnosticCompleted
 from app.shared.learner_model import EVENT_BUS, apply_evidence
-from app.shared.repositories import coding_repository
+from app.shared.repositories import coding_repository, register_diagnostic_store
 from app.shared.repositories.retry import retry_supabase
 
 from .adaptive import AdaptiveDiagnostic
@@ -27,10 +27,34 @@ except ImportError:  # pragma: no cover
 router = APIRouter(prefix="/diagnostic", tags=["diagnostic"])
 PROFILE = load_profile_model()
 SECTION_DEFINITIONS = [
-    {"id": "aptitude", "label": "Aptitude", "description": "Quantitative and logical reasoning", "category": "aptitude"},
-    {"id": "computer_aptitude", "label": "Computer Aptitude", "description": "Computer science fundamentals", "category": "CS core"},
-    {"id": "english", "label": "English", "description": "Grammar, vocabulary, and reading comprehension", "category": "English"},
-    {"id": "coding", "label": "Coding", "description": "Solve a real LeetCode coding problem", "category": "DSA"},
+    {
+        "id": "aptitude",
+        "label": "Aptitude",
+        "description": "Quantitative and logical reasoning",
+        "category": "aptitude",
+        "time_limit_s": 60,
+    },
+    {
+        "id": "computer_aptitude",
+        "label": "Computer Aptitude",
+        "description": "Computer science fundamentals",
+        "category": "CS core",
+        "time_limit_s": 60,
+    },
+    {
+        "id": "english",
+        "label": "English",
+        "description": "Grammar, vocabulary, and reading comprehension",
+        "category": "English",
+        "time_limit_s": 60,
+    },
+    {
+        "id": "coding",
+        "label": "Coding",
+        "description": "Solve a real LeetCode coding problem",
+        "category": "DSA",
+        "time_limit_s": 1500,  # 25 minutes per question
+    },
 ]
 SECTION_BY_ID = {section["id"]: section for section in SECTION_DEFINITIONS}
 SECTION_BY_CATEGORY = {section["category"]: section for section in SECTION_DEFINITIONS}
@@ -62,6 +86,7 @@ class AnswerCreate(BaseModel):
     question_id: str
     answer: str
     time_taken_s: float = Field(ge=0)
+    auto_submitted: bool = False
 
 
 def _new_sections(counts: dict[str, int] | None = None) -> dict[str, dict[str, Any]]:
@@ -70,9 +95,11 @@ def _new_sections(counts: dict[str, int] | None = None) -> dict[str, dict[str, A
     for index, definition in enumerate(SECTION_DEFINITIONS):
         default_limit = 1 if definition["id"] == "coding" else DEFAULT_SECTION_COUNT
         sections[definition["id"]] = {
+            "id": definition["id"],
             "label": definition["label"],
             "category": definition["category"],
             "status": "in_progress" if index == 0 else "locked",
+            "time_limit_s": definition.get("time_limit_s", 60),
             "question_count": 0,
             "question_limit": int(counts.get(definition["id"], default_limit)),
             "correct_count": 0,
@@ -184,6 +211,7 @@ class SessionStore:
 
 
 STORE = SessionStore()
+register_diagnostic_store(STORE)
 
 
 def _public_session(session: dict[str, Any]) -> dict[str, Any]:
@@ -219,11 +247,29 @@ def _section_engine(session: dict[str, Any], definition: dict[str, Any]) -> Adap
     )
 
 
-def _question_response(question: dict[str, Any], definition: dict[str, Any], progress: int, limit: int) -> dict[str, Any]:
+def _question_response(
+    question: dict[str, Any],
+    definition: dict[str, Any],
+    progress: int,
+    limit: int,
+    served_at: str | None = None,
+    time_limit_s: int = 60,
+) -> dict[str, Any]:
     return {
         "done": False,
         "progress": progress,
-        "section": {"id": definition["id"], "label": definition["label"], "description": definition["description"], "index": SECTION_DEFINITIONS.index(definition) + 1, "total": len(SECTION_DEFINITIONS), "question_count": progress, "question_limit": limit},
+        "served_at": served_at,
+        "time_limit_s": time_limit_s,
+        "section": {
+            "id": definition["id"],
+            "label": definition["label"],
+            "description": definition["description"],
+            "index": SECTION_DEFINITIONS.index(definition) + 1,
+            "total": len(SECTION_DEFINITIONS),
+            "question_count": progress,
+            "question_limit": limit,
+            "time_limit_s": time_limit_s,
+        },
         "question": {key: value for key, value in question.items() if key not in {"answer", "category"}},
     }
 
@@ -299,6 +345,9 @@ def next_question(session_id: str, current_user: dict[str, Any] = Depends(get_cu
         return {"done": True, "question": None, "progress": len(session["answers"]), "sections": session["sections"]}
     state = session["sections"][definition["id"]]
 
+    now_iso = datetime.now(timezone.utc).isoformat()
+    limit_s = int(definition.get("time_limit_s", 60))
+
     if definition["id"] == "coding":
         state["question_limit"] = 1
         coding_answers = [a for a in session["answers"] if a.get("section") == "coding"]
@@ -313,6 +362,11 @@ def next_question(session_id: str, current_user: dict[str, Any] = Depends(get_cu
                 "progress": state["question_count"],
             }
         prob = _get_or_assign_coding_problem(session, _user_id(current_user))
+        session["current_question"] = {
+            "question_id": prob["id"],
+            "served_at": now_iso,
+            "time_limit_s": limit_s,
+        }
         STORE.save(session)
         leetcode_q = {
             "id": prob["id"],
@@ -329,6 +383,8 @@ def next_question(session_id: str, current_user: dict[str, Any] = Depends(get_cu
         return {
             "done": False,
             "progress": 0,
+            "served_at": now_iso,
+            "time_limit_s": limit_s,
             "section": {
                 "id": definition["id"],
                 "label": definition["label"],
@@ -337,6 +393,7 @@ def next_question(session_id: str, current_user: dict[str, Any] = Depends(get_cu
                 "total": len(SECTION_DEFINITIONS),
                 "question_count": 0,
                 "question_limit": 1,
+                "time_limit_s": limit_s,
             },
             "question": leetcode_q,
         }
@@ -346,7 +403,21 @@ def next_question(session_id: str, current_user: dict[str, Any] = Depends(get_cu
         state["status"] = "completed"
         STORE.save(session)
         return {"done": False, "section_complete": True, "section": {"id": definition["id"], "label": definition["label"]}, "question": None, "progress": state["question_count"]}
-    return _question_response(question, definition, state["question_count"], state["question_limit"])
+
+    session["current_question"] = {
+        "question_id": question["id"],
+        "served_at": now_iso,
+        "time_limit_s": limit_s,
+    }
+    STORE.save(session)
+    return _question_response(
+        question,
+        definition,
+        state["question_count"],
+        state["question_limit"],
+        served_at=now_iso,
+        time_limit_s=limit_s,
+    )
 
 
 @router.post("/sessions/{session_id}/answer")
@@ -358,14 +429,40 @@ def answer_question(session_id: str, payload: AnswerCreate, current_user: dict[s
     if definition is None:
         raise HTTPException(status_code=409, detail="Diagnostic session is complete")
 
+    GRACE_PERIOD_S = 3.0
+    now = datetime.now(timezone.utc)
+    current_q = session.get("current_question") or {}
+    served_at_str = current_q.get("served_at")
+    time_limit_s = float(current_q.get("time_limit_s", definition.get("time_limit_s", 60)))
+
+    is_timeout = False
+    if served_at_str:
+        try:
+            served_at_dt = datetime.fromisoformat(served_at_str.replace("Z", "+00:00"))
+            elapsed_server = (now - served_at_dt).total_seconds()
+            if elapsed_server > (time_limit_s + GRACE_PERIOD_S):
+                is_timeout = True
+        except Exception:
+            pass
+
+    auto_submitted = payload.auto_submitted or is_timeout
+    time_taken_s = payload.time_taken_s
+    if is_timeout and time_taken_s < time_limit_s:
+        time_taken_s = time_limit_s
+
     if definition["id"] == "coding":
         state = session["sections"]["coding"]
         prob = _get_or_assign_coding_problem(session, _user_id(current_user))
-        is_correct = str(payload.answer).strip().lower() in ("verified", "solved", "correct", "a", "true", "1")
+        if is_timeout:
+            is_correct = False
+        else:
+            is_correct = str(payload.answer).strip().lower() in ("verified", "solved", "correct", "a", "true", "1")
         answer = {
             "question_id": payload.question_id,
+            "title": prob.get("title", "Coding Problem"),
             "correct": is_correct,
-            "time_taken_s": payload.time_taken_s,
+            "time_taken_s": time_taken_s,
+            "auto_submitted": auto_submitted,
             "section": "coding",
             "type": "leetcode",
             "problem_id": prob["id"],
@@ -375,6 +472,7 @@ def answer_question(session_id: str, payload: AnswerCreate, current_user: dict[s
         state["correct_count"] += int(is_correct)
         state.setdefault("answers", []).append(answer)
         state["status"] = "completed"
+        session["current_question"] = None
         if prob.get("assignment_id") and is_correct:
             try:
                 coding_repository.update(_user_id(current_user), prob["assignment_id"], "verified")
@@ -387,6 +485,8 @@ def answer_question(session_id: str, payload: AnswerCreate, current_user: dict[s
         next_definition = _current_section(session)
         return {
             "correct": is_correct,
+            "auto_submitted": auto_submitted,
+            "time_taken_s": time_taken_s,
             "progress": len(session["answers"]),
             "section_complete": True,
             "section": {"id": definition["id"], "label": definition["label"]},
@@ -402,13 +502,30 @@ def answer_question(session_id: str, payload: AnswerCreate, current_user: dict[s
     engine = _section_engine(session, definition)
     if payload.question_id in engine.answered_ids:
         raise HTTPException(status_code=409, detail="Question already answered")
-    correct = engine.answer(question, payload.answer)
-    answer = {"question_id": payload.question_id, "correct": correct, "time_taken_s": payload.time_taken_s, "section": definition["id"]}
+
+    ans_raw = str(payload.answer).strip().lower()
+    if is_timeout or (auto_submitted and ans_raw in ("unanswered", "skipped", "", "none")):
+        correct = False
+        engine.answered_ids.add(question["id"])
+        engine.posteriors[question["topic_id"]].update(False)
+    else:
+        correct = engine.answer(question, payload.answer)
+
+    answer = {
+        "question_id": payload.question_id,
+        "title": question.get("body", payload.question_id),
+        "correct": correct,
+        "time_taken_s": time_taken_s,
+        "auto_submitted": auto_submitted,
+        "section": definition["id"],
+    }
     session["answers"].append(answer)
     state = session["sections"][definition["id"]]
     state["question_count"] += 1
     state["correct_count"] += int(correct)
     state.setdefault("answers", []).append(answer)
+    session["current_question"] = None
+
     section_complete = state["question_count"] >= state["question_limit"] or engine.next_question() is None
     if section_complete:
         state["status"] = "completed"
@@ -417,7 +534,15 @@ def answer_question(session_id: str, payload: AnswerCreate, current_user: dict[s
             session["sections"][SECTION_DEFINITIONS[next_index]["id"]]["status"] = "in_progress"
     STORE.save(session)
     next_definition = _current_section(session)
-    return {"correct": correct, "progress": len(session["answers"]), "section_complete": section_complete, "section": {"id": definition["id"], "label": definition["label"]}, "next_section": {"id": next_definition["id"], "label": next_definition["label"]} if section_complete and next_definition else None}
+    return {
+        "correct": correct,
+        "auto_submitted": auto_submitted,
+        "time_taken_s": time_taken_s,
+        "progress": len(session["answers"]),
+        "section_complete": section_complete,
+        "section": {"id": definition["id"], "label": definition["label"]},
+        "next_section": {"id": next_definition["id"], "label": next_definition["label"]} if section_complete and next_definition else None,
+    }
 
 
 def _profile_vector(mastery: dict[str, float], questions: list[dict[str, Any]]) -> list[float]:
@@ -432,6 +557,7 @@ def _profile_vector(mastery: dict[str, float], questions: list[dict[str, Any]]) 
 
 def _section_reports(session: dict[str, Any], mastery: dict[str, float], questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     topic_names = {question["topic_id"]: question["topic_id"] for question in questions}
+    question_by_id = {q["id"]: q for q in questions}
     reports = []
     for definition in SECTION_DEFINITIONS:
         state = session["sections"][definition["id"]]
@@ -444,6 +570,21 @@ def _section_reports(session: dict[str, Any], mastery: dict[str, float], questio
                 topic_names[prob_topic] = prob.get("title", prob_topic)
         section_mastery = {topic: mastery.get(topic, 0.5) for topic in topic_ids}
         ranked = sorted(section_mastery, key=section_mastery.get)
+
+        sec_answers = [a for a in session["answers"] if a.get("section") == definition["id"]]
+        sec_time_taken_s = sum(a.get("time_taken_s", 0) for a in sec_answers)
+        detailed_answers = []
+        for a in sec_answers:
+            q_info = question_by_id.get(a.get("question_id"), {})
+            title = a.get("title") or q_info.get("body") or (session.get("coding_problem", {}).get("title") if definition["id"] == "coding" else a.get("question_id"))
+            detailed_answers.append({
+                "question_id": a.get("question_id"),
+                "title": title,
+                "correct": a.get("correct", False),
+                "time_taken_s": round(float(a.get("time_taken_s", 0)), 2),
+                "auto_submitted": bool(a.get("auto_submitted", False)),
+            })
+
         reports.append({
             "id": definition["id"],
             "label": definition["label"],
@@ -452,8 +593,10 @@ def _section_reports(session: dict[str, Any], mastery: dict[str, float], questio
             "question_limit": state["question_limit"],
             "correct_count": state["correct_count"],
             "score": state["correct_count"] / max(1, state["question_count"]),
+            "time_taken_s": round(sec_time_taken_s, 2),
             "strong_topics": [topic_names.get(topic, topic) for topic in ranked[-2:]] if ranked else [],
             "weak_topics": [topic_names.get(topic, topic) for topic in ranked[:2]] if ranked else [],
+            "answers": detailed_answers,
         })
     return reports
 
@@ -486,7 +629,7 @@ def complete_session(session_id: str, current_user: dict[str, Any] = Depends(get
     for topic_id, value in mastery.items():
         apply_evidence(session["user_id"], topic_id, value, "diagnostic", 1.0)
     assignment = assign_profile(_profile_vector(mastery, questions), PROFILE)
-    
+
     conf_list = [
         _section_engine(session, d).confidence()
         for d in SECTION_DEFINITIONS
@@ -494,12 +637,27 @@ def complete_session(session_id: str, current_user: dict[str, Any] = Depends(get
     ]
     conf_list.append(0.8 if any(a.get("correct") for a in session["answers"] if a.get("section") == "coding") else 0.5)
     confidence = sum(conf_list) / len(conf_list)
-    
-    result = {"mastery": mastery, "confidence": confidence, "sections": _section_reports(session, mastery, questions), **assignment}
+
+    total_questions = sum(s["question_count"] for s in session["sections"].values())
+    total_correct = sum(s["correct_count"] for s in session["sections"].values())
+    overall_score_percentage = round((total_correct / max(1, total_questions)) * 100, 1)
+
+    result = {
+        "mastery": mastery,
+        "confidence": confidence,
+        "sections": _section_reports(session, mastery, questions),
+        "total_questions": total_questions,
+        "total_correct": total_correct,
+        "overall_score_percentage": overall_score_percentage,
+        **assignment,
+    }
     session.update({"status": "completed", "completed_at": datetime.now(timezone.utc).isoformat(), "result": result})
     STORE.save(session)
     if STORE.supabase:
-        retry_supabase(lambda: STORE.supabase.table("cluster_assignments").insert({"user_id": session["user_id"], "session_id": session_id, **assignment}).execute())
+        try:
+            retry_supabase(lambda: STORE.supabase.table("cluster_assignments").insert({"user_id": session["user_id"], "session_id": session_id, **assignment}).execute())
+        except Exception:
+            pass
     EVENT_BUS.emit(DiagnosticCompleted(user_id=session["user_id"], payload=result))
     return result
 
@@ -509,8 +667,15 @@ def session_report(session_id: str, current_user: dict[str, Any] = Depends(get_c
     session = STORE.get(session_id, _user_id(current_user))
     if not session.get("result"):
         raise HTTPException(status_code=409, detail="Diagnostic session is not complete")
-    mastery = session["result"]["mastery"]
-    return {**session["result"], "weak_topics": sorted(mastery, key=mastery.get)}
+    result = session["result"]
+    mastery = result.get("mastery", {})
+    if "overall_score_percentage" not in result and "sections" in result:
+        total_q = sum(s.get("question_count", 0) for s in result["sections"])
+        total_c = sum(s.get("correct_count", 0) for s in result["sections"])
+        result["total_questions"] = total_q
+        result["total_correct"] = total_c
+        result["overall_score_percentage"] = round((total_c / max(1, total_q)) * 100, 1)
+    return {**result, "weak_topics": sorted(mastery, key=mastery.get)}
 
 
 @router.get("/sessions/{session_id}/coding-suggestions")

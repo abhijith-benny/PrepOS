@@ -64,10 +64,10 @@ class LeetCodeClient:
                 time.sleep(0.15)
         raise LeetCodeNetworkError("LeetCode is temporarily unavailable")
 
-    def recent_accepted_submissions(self, username: str) -> list[dict[str, Any]]:
+    def recent_accepted_submissions(self, username: str, force_refresh: bool = False) -> list[dict[str, Any]]:
         key = username.strip().lower()
         cached = self._cache.get(key)
-        if cached and cached.expires_at > time.monotonic():
+        if not force_refresh and cached and cached.expires_at > time.monotonic():
             return list(cached.submissions)
         data = self._post(SUBMISSIONS_QUERY, {"username": username})
         if data.get("recentAcSubmissionList") is None:

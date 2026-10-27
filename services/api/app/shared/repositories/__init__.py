@@ -61,4 +61,8 @@ __all__ = [
     "study_plan_repository",
     "topic_repository",
     "coding_repository",
+    "get_user_weak_topics",
+    "register_diagnostic_store",
 ]
+
+from .diagnostic import get_user_weak_topics, register_diagnostic_store

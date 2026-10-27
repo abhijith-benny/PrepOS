@@ -16,14 +16,33 @@ class InMemoryCodingRepository:
         ])]
         self.assignments: dict[str, list[dict[str, Any]]] = {}
 
-    def choose(self, user_id: str, weak_topic_ids: list[str]) -> dict[str, Any]:
+    def get_all_problems(self) -> list[dict[str, Any]]:
+        return list(self.problems)
+
+    def assign_problem(self, user_id: str, problem_id: str, rationale: str | None = None) -> dict[str, Any]:
+        problem = next((item for item in self.problems if item["id"] == problem_id or item.get("leetcode_slug") == problem_id), None)
+        if not problem and self.problems:
+            problem = self.problems[0]
+        actual_id = problem["id"] if problem else problem_id
+        assignment = {
+            "id": str(uuid4()),
+            "user_id": user_id,
+            "problem_id": actual_id,
+            "assigned_at": datetime.now(timezone.utc).isoformat(),
+            "status": "pending",
+            "verified_at": None,
+            "problem": problem,
+            "rationale": rationale,
+        }
+        self.assignments.setdefault(user_id, []).append(assignment)
+        return assignment
+
+    def choose(self, user_id: str, weak_topic_ids: list[str], rationale: str | None = None) -> dict[str, Any]:
         assigned = {item["problem_id"] for item in self.assignments.get(user_id, [])}
         problem = next((item for item in self.problems if item["id"] not in assigned and (not weak_topic_ids or item["topic_id"] in weak_topic_ids)), None) or next((item for item in self.problems if item["id"] not in assigned), None)
         if not problem and self.problems:
             problem = self.problems[0]
-        assignment = {"id": str(uuid4()), "user_id": user_id, "problem_id": problem["id"], "assigned_at": datetime.now(timezone.utc).isoformat(), "status": "pending", "verified_at": None, "problem": problem}
-        self.assignments.setdefault(user_id, []).append(assignment)
-        return assignment
+        return self.assign_problem(user_id, problem["id"] if problem else "problem-0", rationale=rationale)
 
     def suggest_problems(self, topic_ids: list[str], limit: int = 3) -> list[dict[str, Any]]:
         """Return up to *limit* problems for the given topic_ids without creating assignments."""
@@ -50,8 +69,22 @@ class InMemoryCodingRepository:
 class SupabaseCodingRepository:
     def __init__(self, client: Client) -> None:
         self.client = client
+        self._rationales: dict[str, str] = {}
 
-    def choose(self, user_id: str, weak_topic_ids: list[str]) -> dict[str, Any]:
+    def get_all_problems(self) -> list[dict[str, Any]]:
+        rows = retry_supabase(lambda: self.client.table("coding_problems").select("*").execute()).data
+        return rows or []
+
+    def assign_problem(self, user_id: str, problem_id: str, rationale: str | None = None) -> dict[str, Any]:
+        prob_rows = retry_supabase(lambda: self.client.table("coding_problems").select("*").eq("id", problem_id).limit(1).execute()).data
+        problem = prob_rows[0] if prob_rows else None
+        row = {"user_id": user_id, "problem_id": problem_id, "status": "pending"}
+        saved = retry_supabase(lambda: self.client.table("coding_assignments").insert(row).execute()).data[0]
+        if rationale:
+            self._rationales[saved["id"]] = rationale
+        return {**saved, "problem": problem, "rationale": rationale}
+
+    def choose(self, user_id: str, weak_topic_ids: list[str], rationale: str | None = None) -> dict[str, Any]:
         query = self.client.table("coding_problems").select("*")
         if weak_topic_ids:
             query = query.in_("topic_id", weak_topic_ids)
@@ -66,9 +99,7 @@ class SupabaseCodingRepository:
                 problem = problems[0]
             else:
                 raise ValueError("No unassigned coding problems are available")
-        row = {"user_id": user_id, "problem_id": problem["id"], "status": "pending"}
-        saved = retry_supabase(lambda: self.client.table("coding_assignments").insert(row).execute()).data[0]
-        return {**saved, "problem": problem}
+        return self.assign_problem(user_id, problem["id"], rationale=rationale)
 
     def suggest_problems(self, topic_ids: list[str], limit: int = 3) -> list[dict[str, Any]]:
         """Return up to *limit* problems for the given topic_ids without creating assignments."""
@@ -83,7 +114,14 @@ class SupabaseCodingRepository:
 
     def list_for_user(self, user_id: str) -> list[dict[str, Any]]:
         rows = retry_supabase(lambda: self.client.table("coding_assignments").select("*,coding_problems(*)").eq("user_id", user_id).order("assigned_at", desc=True).execute()).data
-        return [{**row, "problem": row.pop("coding_problems", None)} for row in rows]
+        return [
+            {
+                **row,
+                "problem": row.pop("coding_problems", None),
+                "rationale": self._rationales.get(row["id"]) or row.get("rationale"),
+            }
+            for row in rows
+        ]
 
     def get(self, user_id: str, assignment_id: str) -> dict[str, Any] | None:
         rows = retry_supabase(lambda: self.client.table("coding_assignments").select("*,coding_problems(*)").eq("id", assignment_id).eq("user_id", user_id).limit(1).execute()).data
@@ -91,11 +129,16 @@ class SupabaseCodingRepository:
             return None
         row = rows[0]
         row["problem"] = row.pop("coding_problems", None)
+        row["rationale"] = self._rationales.get(row["id"]) or row.get("rationale")
         return row
 
     def update(self, user_id: str, assignment_id: str, status: str) -> dict[str, Any] | None:
         rows = retry_supabase(lambda: self.client.table("coding_assignments").update({"status": status, "verified_at": datetime.now(timezone.utc).isoformat() if status == "verified" else None}).eq("id", assignment_id).eq("user_id", user_id).execute()).data
-        return rows[0] if rows else None
+        if rows:
+            row = rows[0]
+            row["rationale"] = self._rationales.get(assignment_id) or row.get("rationale")
+            return row
+        return None
 
 
 def create_coding_repository(url: str, service_role_key: str):
