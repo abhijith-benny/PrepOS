@@ -4,7 +4,6 @@ from importlib import import_module
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
 
 from app.core.deps import get_current_user
 from app.shared.events import AttemptRecorded
@@ -24,8 +23,8 @@ app.add_middleware(
 
 
 @app.get("/")
-def root() -> RedirectResponse:
-    return RedirectResponse(url="/interview/ui")
+def root() -> dict[str, str]:
+    return {"app": "PrepOS API", "status": "running"}
 
 
 @app.get("/health")
