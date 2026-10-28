@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from './supabaseClient'
 import { useAuthStore } from './store/authStore'
 import { apiRequest } from './apiClient'
+import { Review } from './pages/Review'
 
 const navItems = [
   { label: 'Dashboard', path: '/', icon: '01' },
@@ -1235,7 +1236,7 @@ function AppShell() {
           {page === 'Profile' && <Profile profile={profile} loading={profileLoading} error={profileError} onSaved={setProfile} />}
           {page === 'Coding Practice' && <CodingPractice />}
           {page === 'Question Staging' && <AdminQuestionStaging />}
-          {page === 'Review' && <div className="card"><h3>Review</h3><p>Review workspace is coming soon.</p></div>}
+          {page === 'Review' && <Review />}
           {page === 'Interview' && <div className="card"><h3>Interview</h3><p>Interview workspace is coming soon.</p></div>}
         </div>
       </main>

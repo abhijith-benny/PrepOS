@@ -21,6 +21,8 @@ from app.shared.repositories.scheduler import (
     create_scheduler_repositories,
 )
 from app.shared.repositories.coding import InMemoryCodingRepository, create_coding_repository
+from app.shared.repositories.question import InMemoryQuestionRepository, create_question_repository
+from app.shared.repositories.srs import InMemorySRSRepository, create_srs_repository
 from app.shared.repositories.supabase import create_supabase_repositories
 
 
@@ -34,6 +36,8 @@ if settings.supabase_url and settings.supabase_service_role_key:
         settings.supabase_service_role_key,
     )
     coding_repository = create_coding_repository(settings.supabase_url, settings.supabase_service_role_key)
+    question_repository = create_question_repository(settings.supabase_url, settings.supabase_service_role_key)
+    srs_repository = create_srs_repository(settings.supabase_url, settings.supabase_service_role_key)
 else:
     skill_repository = InMemorySkillRepository()
     event_repository = InMemoryEventRepository()
@@ -42,6 +46,8 @@ else:
     profile_repository = InMemoryProfileRepository()
     study_plan_repository = InMemoryStudyPlanRepository()
     coding_repository = InMemoryCodingRepository()
+    question_repository = InMemoryQuestionRepository()
+    srs_repository = InMemorySRSRepository()
 
 
 __all__ = [
@@ -61,8 +67,13 @@ __all__ = [
     "study_plan_repository",
     "topic_repository",
     "coding_repository",
+    "question_repository",
+    "srs_repository",
+    "QuestionRepository",
+    "SRSRepository",
     "get_user_weak_topics",
     "register_diagnostic_store",
 ]
 
-from .diagnostic import get_user_weak_topics, register_diagnostic_store
+from .diagnostic import get_user_weak_topics, register_diagnostic_store
+

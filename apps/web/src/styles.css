@@ -829,3 +829,74 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .btn-reject { color: #c5221f; border-color: #fce8e6; }
 .btn-reject:hover { background: #fce8e6; color: #a50e0e; }
 
+/* ==========================================================================
+   SRS Spaced Repetition Review Styles
+   ========================================================================== */
+.srs-page { display: grid; gap: var(--space-5); }
+.srs-actions { display: flex; align-items: center; gap: var(--space-2); }
+
+.srs-stats-grid { display: grid; grid-template-columns: repeat(3, 1fr) 1.5fr; gap: var(--space-4); }
+@media (max-width: 900px) {
+  .srs-stats-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.srs-forecast-card { display: flex; flex-direction: column; justify-content: space-between; }
+.srs-forecast-chart { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; height: 75px; align-items: flex-end; margin-top: 8px; }
+.srs-bar-col { display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
+.srs-bar-track { width: 100%; height: 50px; display: flex; align-items: flex-end; justify-content: center; background: rgba(0,0,0,0.03); border-radius: 4px; }
+.srs-bar-fill { width: 16px; border-radius: 4px 4px 0 0; background: var(--color-accent); display: flex; align-items: flex-start; justify-content: center; position: relative; transition: height 240ms ease; }
+.srs-bar-fill.today { background: #137333; }
+.srs-bar-value { font-size: 10px; font-weight: 700; color: white; margin-top: 2px; }
+.srs-bar-label { font-size: 10px; color: var(--color-muted); margin-top: 4px; }
+
+.srs-card-container { display: grid; gap: var(--space-5); padding: var(--space-6); }
+.srs-progress-header { display: grid; gap: 6px; }
+.srs-progress-meta { display: flex; justify-content: space-between; font-size: 13px; color: var(--color-muted); }
+.srs-timer { font-weight: 600; color: var(--color-accent-dark); font-variant-numeric: tabular-nums; }
+.srs-progress-track { width: 100%; height: 6px; border-radius: 3px; background: var(--color-line); overflow: hidden; }
+.srs-progress-bar { height: 100%; border-radius: 3px; background: var(--color-accent); transition: width 240ms ease; }
+
+.srs-card-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.srs-question-body h3 { font-size: 20px; font-weight: 600; line-height: 1.4; margin: 0; color: var(--color-ink); }
+
+.srs-options-grid { display: grid; gap: 10px; }
+.srs-option-btn { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 18px; border: 1.5px solid var(--color-line); border-radius: var(--radius-small); background: var(--color-surface); color: var(--color-ink); text-align: left; font-size: 15px; cursor: pointer; transition: all 160ms ease; }
+.srs-option-btn:hover:not(:disabled) { border-color: var(--color-accent); background: #f4f8fe; transform: translateY(-1px); box-shadow: var(--shadow-small); }
+.srs-option-btn.selected { border-color: var(--color-accent); background: #eef4fc; color: var(--color-accent-dark); font-weight: 600; }
+.srs-option-btn.correct-answer { border-color: #137333; background: #e6f4ea; color: #137333; font-weight: 700; }
+.srs-option-btn.wrong-answer { border-color: #c5221f; background: #fce8e6; color: #c5221f; font-weight: 600; }
+.srs-option-key { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 6px; background: var(--color-surface-soft); font-size: 12px; font-weight: 700; color: var(--color-muted); flex-shrink: 0; }
+.srs-option-btn.selected .srs-option-key { background: var(--color-accent); color: white; }
+.srs-option-text { flex: 1; }
+
+.srs-confidence-row { display: flex; align-items: center; gap: 12px; margin-top: 4px; padding-top: 8px; }
+.srs-confidence-label { font-size: 13px; font-weight: 600; color: var(--color-muted); }
+.srs-confidence-pills { display: flex; gap: 8px; }
+.srs-conf-pill { padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; border: 1px solid var(--color-line); background: transparent; color: var(--color-muted); cursor: pointer; }
+.srs-conf-pill:hover { border-color: var(--color-accent); color: var(--color-accent-dark); }
+.srs-conf-pill.active { background: var(--color-accent-soft); border-color: var(--color-accent); color: var(--color-accent-dark); }
+
+.srs-submit-row { display: flex; justify-content: flex-end; margin-top: 8px; }
+
+.srs-feedback-panel { display: grid; gap: var(--space-4); margin-top: var(--space-3); padding-top: var(--space-4); border-top: 1px solid var(--color-line); }
+.srs-feedback-status { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-radius: var(--radius-small); font-weight: 700; }
+.srs-feedback-status.status-correct { background: #e6f4ea; color: #137333; border: 1px solid #ceead6; }
+.srs-feedback-status.status-incorrect { background: #fce8e6; color: #c5221f; border: 1px solid #fad2cf; }
+.srs-status-icon { font-size: 18px; }
+.srs-status-details { display: flex; gap: 16px; font-size: 13px; }
+
+.srs-explanation-box { padding: 14px 18px; border-radius: var(--radius-small); background: var(--color-surface-soft); border: 1px solid var(--color-line); }
+.srs-explanation-box strong { display: block; margin-bottom: 4px; font-size: 13px; color: var(--color-ink); }
+.srs-explanation-box p { margin: 0; font-size: 14px; line-height: 1.5; color: var(--color-muted); }
+
+.srs-next-row { display: flex; justify-content: flex-end; }
+
+.srs-summary-card, .srs-empty-card { text-align: center; padding: 48px var(--space-6); display: grid; gap: 12px; place-items: center; }
+.srs-summary-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; background: #e6f4ea; color: #137333; font-weight: 700; font-size: 13px; }
+.srs-summary-actions, .srs-empty-actions { display: flex; gap: 12px; margin-top: 12px; }
+.srs-empty-icon { width: 56px; height: 56px; border-radius: 50%; background: #e6f4ea; color: #137333; font-size: 28px; display: grid; place-items: center; margin-bottom: 8px; }
+
+.error-banner { padding: 10px 14px; border-radius: var(--radius-small); background: #fce8e6; color: #c5221f; border: 1px solid #fad2cf; font-size: 13px; }
+.info-banner { padding: 10px 14px; border-radius: var(--radius-small); background: #eef4fc; color: var(--color-accent-dark); border: 1px solid #d2e3fc; font-size: 13px; font-weight: 600; }
+
+
